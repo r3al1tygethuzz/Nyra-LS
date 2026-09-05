@@ -194,13 +194,6 @@ local function StartFlight()
 	humanoid.AutoRotate = false
 	humanoid.PlatformStand = true
 
-	-- Disable collisions to pass through walls
-	for _, part in ipairs(character:GetDescendants()) do
-		if part:IsA("BasePart") and part ~= root then
-			part.CanCollide = false
-		end
-	end
-
 	-- Update UI
 	if FlightStatus then
 		FlightStatus.Value.Text = "ENABLED"
