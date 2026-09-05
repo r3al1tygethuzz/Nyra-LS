@@ -16,7 +16,7 @@ local aimbotEnabled = false
 local aimbotSmoothness = 0.1  -- Default smoothness for camera lock
 local aimbotKeybind = Enum.KeyCode.G  -- Default keybind for aimbot toggle
 local aimbotMode = "toggle"  -- "toggle" or "hold"
-local flySpeed = 3  -- Default speed (1-10 range)
+local flySpeed = 25  -- Increased default for faster start (1-50 range now)
 local verticalSpeed = flySpeed  -- Matched to flySpeed for consistent, snappier up/down
 local turnSpeed = 0.15  -- Subtle for smoothness
 local uiVisible = true
@@ -216,7 +216,7 @@ speedLabel.BackgroundTransparency = 1
 speedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 speedLabel.Font = Enum.Font.SourceSans
 
--- Speed slider (visual bar with knob)
+-- Speed slider (visual bar with ***** updated for 1-50 range)
 local speedSliderFrame = Instance.new("Frame", flyFrame)
 speedSliderFrame.Size = UDim2.new(0.9, 0, 0, 45)
 speedSliderFrame.Position = UDim2.new(0.05, 0, 0.3, 0)
@@ -225,7 +225,7 @@ local sliderFrameCorner = Instance.new("UICorner", speedSliderFrame)
 sliderFrameCorner.CornerRadius = UDim.new(0, 8)
 
 local speedSliderFill = Instance.new("Frame", speedSliderFrame)
-speedSliderFill.Size = UDim2.new((flySpeed - 1) / 9, 0, 1, 0)  -- For range 1-10
+speedSliderFill.Size = UDim2.new((flySpeed - 1) / 49, 0, 1, 0)  -- Adjusted for 1-50 range
 speedSliderFill.Position = UDim2.new(0, 0, 0, 0)
 speedSliderFill.BackgroundColor3 = Color3.fromRGB(100, 150, 100)
 local fillCorner = Instance.new("UICorner", speedSliderFill)
@@ -233,7 +233,7 @@ fillCorner.CornerRadius = UDim.new(0, 8)
 
 local speedSliderKnob = Instance.new("TextButton", speedSliderFrame)
 speedSliderKnob.Size = UDim2.new(0, 20, 1, 0)
-speedSliderKnob.Position = UDim2.new((flySpeed - 1) / 9, -10, 0, 0)
+speedSliderKnob.Position = UDim2.new((flySpeed - 1) / 49, -10, 0, 0)  -- Adjusted for 1-50
 speedSliderKnob.Text = ""
 speedSliderKnob.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
 local knobCorner = Instance.new("UICorner", speedSliderKnob)
@@ -257,7 +257,7 @@ runService.RenderStepped:Connect(function()
         local sliderPos = speedSliderFrame.AbsolutePosition
         local sliderSize = speedSliderFrame.AbsoluteSize
         local relativeX = math.clamp((mousePos.X - sliderPos.X) / sliderSize.X, 0, 1)
-        local newSpeed = math.floor(relativeX * 9 + 1)  -- 1 to 10
+        local newSpeed = math.floor(relativeX * 49 + 1)  -- Now 1 to 50
         if newSpeed ~= flySpeed then
             flySpeed = newSpeed
             verticalSpeed = flySpeed
@@ -285,10 +285,10 @@ resetButton.MouseLeave:Connect(function()
     tweenService:Create(resetButton, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(80, 80, 150)}):Play()
 end)
 resetButton.MouseButton1Click:Connect(function()
-    flySpeed = 3
+    flySpeed = 10  -- Changed from 3 for better default
     verticalSpeed = flySpeed
     speedLabel.Text = "Speed: " .. flySpeed
-    local relativeX = (flySpeed - 1) / 9  -- 2/9 ≈ 0.222 for speed 3
+    local relativeX = (flySpeed - 1) / 49
     speedSliderFill.Size = UDim2.new(relativeX, 0, 1, 0)
     speedSliderKnob.Position = UDim2.new(relativeX, -10, 0, 0)
 end)
