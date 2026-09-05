@@ -5,6 +5,7 @@
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 
 local Player = Players.LocalPlayer
 local PlayerGui = Player:WaitForChild("PlayerGui")
@@ -54,6 +55,17 @@ local State = {
 
 	Animations = true,
 	MinimalBorders = false,
+
+	-- Flight internals
+	FlightConnection = nil,
+	Keys = {
+		W = false,
+		A = false,
+		S = false,
+		D = false,
+		Space = false,
+		LeftShift = false,
+	},
 }
 
 --==================================================
@@ -1001,7 +1013,11 @@ local QuickFlight = CreateToggle(
 		FlightStatus.Dot.BackgroundColor3 =
 			value and CONFIG.Success or CONFIG.Muted
 
-		-- Hook your own game's flight controller here.
+		if value then
+			StartFlight()
+		else
+			StopFlight()
+		end
 	end
 )
 
@@ -1063,8 +1079,6 @@ local SpeedSlider = CreateSlider(
 		State.FlySpeed = math.floor(value)
 
 		SpeedStatus.Value.Text = tostring(State.FlySpeed)
-
-		-- CONNECT YOUR FLIGHT SPEED VARIABLE HERE
 	end
 )
 
