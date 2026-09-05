@@ -143,6 +143,144 @@ local function TextLabel(parent, text, size, color, font)
 end
 
 --==================================================
+-- FLIGHT SYSTEM
+--==================================================
+
+local function StartFlight()
+	if State.FlightConnection then return end
+
+	local character = Player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+	if not root or not humanoid then return end
+
+	State.Flight = true
+
+	-- Disable auto rotate
+	humanoid.AutoRotate = false
+
+	-- Update UI
+	FlightStatus.Value.Text = "ENABLED"
+	FlightStatus.Dot.BackgroundColor3 = CONFIG.Success
+
+	-- Key handling
+	State.FlightInputBegan = UserInputService.InputBegan:Connect(function(input, processed)
+		if processed then return end
+		if input.UserInputType == Enum.UserInputType.Keyboard then
+			local key = input.KeyCode.Name
+			if key == "W" then State.Keys.W = true
+			elseif key == "A" then State.Keys.A = true
+			elseif key == "S" then State.Keys.S = true
+			elseif key == "D" then State.Keys.D = true
+			elseif key == "Space" then State.Keys.Space = true
+			elseif key == "LeftShift" then State.Keys.LeftShift = true
+			end
+		end
+	end)
+
+	State.FlightInputEnded = UserInputService.InputEnded:Connect(function(input, processed)
+		if processed then return end
+		if input.UserInputType == Enum.UserInputType.Keyboard then
+			local key = input.KeyCode.Name
+			if key == "W" then State.Keys.W = false
+			elseif key == "A" then State.Keys.A = false
+			elseif key == "S" then State.Keys.S = false
+			elseif key == "D" then State.Keys.D = false
+			elseif key == "Space" then State.Keys.Space = false
+			elseif key == "LeftShift" then State.Keys.LeftShift = false
+			end
+		end
+	end)
+
+	-- Flight loop
+	State.FlightConnection = RunService.RenderStepped:Connect(function(deltaTime)
+		local character = Player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+		if not root or not humanoid then
+			StopFlight()
+			return
+		end
+
+		local camera = workspace.CurrentCamera
+		local look = camera.CFrame.LookVector
+		local right = camera.CFrame.RightVector
+
+		local movement = Vector3.zero
+
+		if State.Keys.W then movement = movement + look end
+		if State.Keys.S then movement = movement - look end
+		if State.Keys.A then movement = movement - right end
+		if State.Keys.D then movement = movement + right end
+		if State.Keys.Space then movement = movement + Vector3.yAxis end
+		if State.Keys.LeftShift then movement = movement - Vector3.yAxis end
+
+		if movement.Magnitude > 0 then
+			movement = movement.Unit
+
+			-- Move
+			root.CFrame = root.CFrame * CFrame.new(movement * State.FlySpeed * deltaTime)
+
+			-- Face direction
+			local horizontal = Vector3.new(movement.X, 0, movement.Z)
+			if horizontal.Magnitude > 0.001 then
+				horizontal = horizontal.Unit
+				root.CFrame = CFrame.lookAt(root.Position, root.Position + horizontal)
+			end
+		end
+	end)
+end
+
+local function StopFlight()
+	if not State.FlightConnection then return end
+
+	State.FlightConnection:Disconnect()
+	State.FlightConnection = nil
+
+	-- Disconnect inputs
+	if State.FlightInputBegan then
+		State.FlightInputBegan:Disconnect()
+		State.FlightInputBegan = nil
+	end
+	if State.FlightInputEnded then
+		State.FlightInputEnded:Disconnect()
+		State.FlightInputEnded = nil
+	end
+
+	State.Flight = false
+
+	-- Update UI
+	FlightStatus.Value.Text = "DISABLED"
+	FlightStatus.Dot.BackgroundColor3 = CONFIG.Muted
+
+	local character = Player.Character
+	if character then
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			humanoid.AutoRotate = true
+		end
+	end
+
+	-- Reset keys
+	for k in pairs(State.Keys) do State.Keys[k] = false end
+end
+
+local function SetFlightSpeed(speed)
+	State.FlySpeed = speed
+	SpeedStatus.Value.Text = tostring(speed)
+end
+
+-- Handle respawn
+Player.CharacterAdded:Connect(function()
+	if State.Flight then
+		StopFlight()
+		StartFlight()
+	end
+end)
+
+--==================================================
 -- ROOT
 --==================================================
 
@@ -1009,10 +1147,6 @@ local QuickFlight = CreateToggle(
 	function(value)
 		State.Flight = value
 
-		FlightStatus.Value.Text = value and "ENABLED" or "DISABLED"
-		FlightStatus.Dot.BackgroundColor3 =
-			value and CONFIG.Success or CONFIG.Muted
-
 		if value then
 			StartFlight()
 		else
@@ -1061,11 +1195,11 @@ local FlightToggle = CreateToggle(
 	function(value)
 		State.Flight = value
 
-		FlightStatus.Value.Text = value and "ENABLED" or "DISABLED"
-		FlightStatus.Dot.BackgroundColor3 =
-			value and CONFIG.Success or CONFIG.Muted
-
-		-- CONNECT YOUR STUDIO FLIGHT CONTROLLER HERE
+		if value then
+			StartFlight()
+		else
+			StopFlight()
+		end
 	end
 )
 
@@ -1076,9 +1210,7 @@ local SpeedSlider = CreateSlider(
 	200,
 	State.FlySpeed,
 	function(value)
-		State.FlySpeed = math.floor(value)
-
-		SpeedStatus.Value.Text = tostring(State.FlySpeed)
+		SetFlightSpeed(math.floor(value))
 	end
 )
 
@@ -1368,15 +1500,11 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	end
 
 	if input.KeyCode.Name == State.Keybind then
-		State.Flight = not State.Flight
-
-		FlightStatus.Value.Text =
-			State.Flight and "ENABLED" or "DISABLED"
-
-		FlightStatus.Dot.BackgroundColor3 =
-			State.Flight and CONFIG.Success or CONFIG.Muted
-
-		-- CONNECT YOUR OWN FLIGHT START/STOP FUNCTIONS HERE
+		if State.Flight then
+			StopFlight()
+		else
+			StartFlight()
+		end
 	end
 end)
 
