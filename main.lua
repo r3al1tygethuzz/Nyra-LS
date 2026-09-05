@@ -68,6 +68,12 @@ local State = {
 	},
 }
 
+-- UI Status Variables (assigned later)
+local FlightStatus
+local AimStatus
+local SpeedStatus
+local ModeStatus
+
 --==================================================
 -- HELPERS
 --==================================================
@@ -146,137 +152,215 @@ end
 -- FLIGHT SYSTEM
 --==================================================
 
-local function StartFlight()
-	if State.FlightConnection then return end
+local FlightConnection = nil
+local FlightInputConnection = nil
+local FlightInputEndConnection = nil
 
+local FlightKeys = {
+	W = false,
+	A = false,
+	S = false,
+	D = false,
+	Space = false,
+	LeftShift = false,
+}
+
+local function GetCharacter()
 	local character = Player.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 
-	if not root or not humanoid then return end
+	if not character then
+		return nil, nil, nil
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local root = character:FindFirstChild("HumanoidRootPart")
+
+	return character, humanoid, root
+end
+
+local function StartFlight()
+	if FlightConnection then
+		return
+	end
+
+	local character, humanoid, root = GetCharacter()
+
+	if not character or not humanoid or not root then
+		warn("[NYRA] Character is not ready for flight.")
+		return
+	end
 
 	State.Flight = true
-
-	-- Disable auto rotate
 	humanoid.AutoRotate = false
 
 	-- Update UI
-	FlightStatus.Value.Text = "ENABLED"
-	FlightStatus.Dot.BackgroundColor3 = CONFIG.Success
+	if FlightStatus then
+		FlightStatus.Value.Text = "ENABLED"
+		FlightStatus.Dot.BackgroundColor3 = CONFIG.Success
+	end
 
-	-- Key handling
-	State.FlightInputBegan = UserInputService.InputBegan:Connect(function(input, processed)
-		if processed then return end
-		if input.UserInputType == Enum.UserInputType.Keyboard then
-			local key = input.KeyCode.Name
-			if key == "W" then State.Keys.W = true
-			elseif key == "A" then State.Keys.A = true
-			elseif key == "S" then State.Keys.S = true
-			elseif key == "D" then State.Keys.D = true
-			elseif key == "Space" then State.Keys.Space = true
-			elseif key == "LeftShift" then State.Keys.LeftShift = true
-			end
+	-- Keyboard input
+	FlightInputConnection = UserInputService.InputBegan:Connect(function(input, processed)
+		if processed then
+			return
+		end
+
+		if input.UserInputType ~= Enum.UserInputType.Keyboard then
+			return
+		end
+
+		local key = input.KeyCode.Name
+
+		if FlightKeys[key] ~= nil then
+			FlightKeys[key] = true
 		end
 	end)
 
-	State.FlightInputEnded = UserInputService.InputEnded:Connect(function(input, processed)
-		if processed then return end
-		if input.UserInputType == Enum.UserInputType.Keyboard then
-			local key = input.KeyCode.Name
-			if key == "W" then State.Keys.W = false
-			elseif key == "A" then State.Keys.A = false
-			elseif key == "S" then State.Keys.S = false
-			elseif key == "D" then State.Keys.D = false
-			elseif key == "Space" then State.Keys.Space = false
-			elseif key == "LeftShift" then State.Keys.LeftShift = false
-			end
+	FlightInputEndConnection = UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType ~= Enum.UserInputType.Keyboard then
+			return
+		end
+
+		local key = input.KeyCode.Name
+
+		if FlightKeys[key] ~= nil then
+			FlightKeys[key] = false
 		end
 	end)
 
 	-- Flight loop
-	State.FlightConnection = RunService.RenderStepped:Connect(function(deltaTime)
-		local character = Player.Character
-		local root = character and character:FindFirstChild("HumanoidRootPart")
-		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	FlightConnection = RunService.RenderStepped:Connect(function(deltaTime)
+		local currentCharacter, currentHumanoid, currentRoot = GetCharacter()
 
-		if not root or not humanoid then
-			StopFlight()
+		if not currentCharacter or not currentHumanoid or not currentRoot then
 			return
 		end
 
 		local camera = workspace.CurrentCamera
-		local look = camera.CFrame.LookVector
-		local right = camera.CFrame.RightVector
+
+		if not camera then
+			return
+		end
 
 		local movement = Vector3.zero
 
-		if State.Keys.W then movement = movement + look end
-		if State.Keys.S then movement = movement - look end
-		if State.Keys.A then movement = movement - right end
-		if State.Keys.D then movement = movement + right end
-		if State.Keys.Space then movement = movement + Vector3.yAxis end
-		if State.Keys.LeftShift then movement = movement - Vector3.yAxis end
+		local look = camera.CFrame.LookVector
+		local right = camera.CFrame.RightVector
+
+		if FlightKeys.W then
+			movement += look
+		end
+
+		if FlightKeys.S then
+			movement -= look
+		end
+
+		if FlightKeys.A then
+			movement -= right
+		end
+
+		if FlightKeys.D then
+			movement += right
+		end
+
+		if FlightKeys.Space then
+			movement += Vector3.yAxis
+		end
+
+		if FlightKeys.LeftShift then
+			movement -= Vector3.yAxis
+		end
 
 		if movement.Magnitude > 0 then
 			movement = movement.Unit
 
-			-- Move
-			root.CFrame = root.CFrame * CFrame.new(movement * State.FlySpeed * deltaTime)
+			-- CFrame movement
+			currentRoot.CFrame =
+				currentRoot.CFrame +
+				(movement * State.FlySpeed * deltaTime)
 
-			-- Face direction
-			local horizontal = Vector3.new(movement.X, 0, movement.Z)
+			-- Horizontal facing
+			local horizontal = Vector3.new(
+				movement.X,
+				0,
+				movement.Z
+			)
+
 			if horizontal.Magnitude > 0.001 then
 				horizontal = horizontal.Unit
-				root.CFrame = CFrame.lookAt(root.Position, root.Position + horizontal)
+
+				currentRoot.CFrame = CFrame.lookAt(
+					currentRoot.Position,
+					currentRoot.Position + horizontal
+				)
 			end
 		end
 	end)
+
+	print("[NYRA] Flight enabled.")
 end
 
 local function StopFlight()
-	if not State.FlightConnection then return end
-
-	State.FlightConnection:Disconnect()
-	State.FlightConnection = nil
-
-	-- Disconnect inputs
-	if State.FlightInputBegan then
-		State.FlightInputBegan:Disconnect()
-		State.FlightInputBegan = nil
+	if FlightConnection then
+		FlightConnection:Disconnect()
+		FlightConnection = nil
 	end
-	if State.FlightInputEnded then
-		State.FlightInputEnded:Disconnect()
-		State.FlightInputEnded = nil
+
+	if FlightInputConnection then
+		FlightInputConnection:Disconnect()
+		FlightInputConnection = nil
+	end
+
+	if FlightInputEndConnection then
+		FlightInputEndConnection:Disconnect()
+		FlightInputEndConnection = nil
+	end
+
+	for key in pairs(FlightKeys) do
+		FlightKeys[key] = false
+	end
+
+	local character, humanoid = GetCharacter()
+
+	if humanoid then
+		humanoid.AutoRotate = true
 	end
 
 	State.Flight = false
 
 	-- Update UI
-	FlightStatus.Value.Text = "DISABLED"
-	FlightStatus.Dot.BackgroundColor3 = CONFIG.Muted
-
-	local character = Player.Character
-	if character then
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-		if humanoid then
-			humanoid.AutoRotate = true
-		end
+	if FlightStatus then
+		FlightStatus.Value.Text = "DISABLED"
+		FlightStatus.Dot.BackgroundColor3 = CONFIG.Muted
 	end
 
-	-- Reset keys
-	for k in pairs(State.Keys) do State.Keys[k] = false end
+	print("[NYRA] Flight disabled.")
 end
 
 local function SetFlightSpeed(speed)
-	State.FlySpeed = speed
-	SpeedStatus.Value.Text = tostring(speed)
+	State.FlySpeed = math.clamp(
+		tonumber(speed) or 60,
+		10,
+		200
+	)
+
+	if SpeedStatus then
+		SpeedStatus.Value.Text = tostring(
+			math.floor(State.FlySpeed)
+		)
+	end
 end
 
--- Handle respawn
-Player.CharacterAdded:Connect(function()
+-- Respawn handling
+Player.CharacterAdded:Connect(function(character)
 	if State.Flight then
 		StopFlight()
-		StartFlight()
+
+		task.wait(0.5)
+
+		if Player.Character == character then
+			StartFlight()
+		end
 	end
 end)
 
