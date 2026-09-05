@@ -14,6 +14,7 @@ local PlayerGui = Player:WaitForChild("PlayerGui")
 --==============================================================
 
 local flySpeed = 25
+local verticalSpeed = flySpeed
 local aimbotSmoothness = 0.1
 local aimbotKeybind = Enum.KeyCode.G
 local aimbotMode = "Toggle"
@@ -32,51 +33,49 @@ end
 
 local function startFly()
     if not getValidCharacter() then return end
-    local character = Player.Character
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    local camera = workspace.CurrentCamera
-
-    humanoid.PlatformStand = true
-    -- Use CFrame for direct position changes to bypass physics detection
-
+    -- Add BodyVelocity for movement
+    local bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.Velocity = Vector3.zero
+    bodyVelocity.MaxForce = Vector3.new(400000, 400000, 400000)  -- High force for instant response
+    bodyVelocity.Parent = Player.Character.HumanoidRootPart
     flyConnection = RunService.Heartbeat:Connect(function(deltaTime)
         if not flying or not getValidCharacter() then
             stopFly()
             return
         end
-
         local moveVector = Vector3.zero
-        -- Horizontal movement (camera-aligned)
+        -- Horizontal movement based on camera
         if UIS:IsKeyDown(Enum.KeyCode.W) then
-            moveVector = moveVector + camera.CFrame.LookVector
+            moveVector = moveVector + workspace.CurrentCamera.CFrame.LookVector
         end
         if UIS:IsKeyDown(Enum.KeyCode.S) then
-            moveVector = moveVector - camera.CFrame.LookVector
+            moveVector = moveVector - workspace.CurrentCamera.CFrame.LookVector
         end
         if UIS:IsKeyDown(Enum.KeyCode.A) then
-            moveVector = moveVector - camera.CFrame.RightVector
+            moveVector = moveVector - workspace.CurrentCamera.CFrame.RightVector
         end
         if UIS:IsKeyDown(Enum.KeyCode.D) then
-            moveVector = moveVector + camera.CFrame.RightVector
+            moveVector = moveVector + workspace.CurrentCamera.CFrame.RightVector
+        end
+        if UIS:IsKeyDown(Enum.KeyCode.Q) then  -- Turn left
+            moveVector = moveVector - workspace.CurrentCamera.CFrame.RightVector
+        end
+        if UIS:IsKeyDown(Enum.KeyCode.E) then  -- Turn right
+            moveVector = moveVector + workspace.CurrentCamera.CFrame.RightVector
+        end
+        -- Normalize and scale for speed
+        if moveVector.Magnitude > 0 then
+            moveVector = moveVector.Unit * flySpeed
         end
         -- Vertical movement
         if UIS:IsKeyDown(Enum.KeyCode.Space) then
-            moveVector = moveVector + Vector3.new(0, 1, 0)
+            moveVector = moveVector + Vector3.new(0, verticalSpeed, 0)
         end
         if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then
-            moveVector = moveVector - Vector3.new(0, 1, 0)
+            moveVector = moveVector - Vector3.new(0, verticalSpeed, 0)
         end
-        -- Normalize and clamp speed to realistic values (max 50) to avoid anti-cheat flags
-        if moveVector.Magnitude > 0 then
-            moveVector = moveVector.Unit * math.min(flySpeed * deltaTime, 50 * deltaTime)
-        end
-        -- Add small random offset to mimic natural movement and keep sending updates
-        moveVector = moveVector + Vector3.new(math.random(-0.01, 0.01), math.random(-0.01, 0.01), math.random(-0.01, 0.01))
-        
-        -- Apply movement via CFrame for smooth, anti-ban flight
-        local newCFrame = rootPart.CFrame + moveVector
-        rootPart.CFrame = newCFrame
+        -- Set velocity to moveVector for smooth, anti-ban flight
+        bodyVelocity.Velocity = moveVector
     end)
 end
 
@@ -85,9 +84,10 @@ local function stopFly()
         flyConnection:Disconnect()
         flyConnection = nil
     end
-    if getValidCharacter() then
-        local humanoid = Player.Character:FindFirstChildOfClass("Humanoid")
-        humanoid.PlatformStand = false
+    -- Remove BodyVelocity
+    local bodyVelocity = Player.Character.HumanoidRootPart:FindFirstChild("BodyVelocity")
+    if bodyVelocity then
+        bodyVelocity:Destroy()
     end
 end
 
@@ -96,8 +96,22 @@ UIS.InputBegan:Connect(function(input, gameProcessed)
     if not gameProcessed and input.KeyCode == Enum.KeyCode.F then
         flying = not flying
         if flying then
+            if getValidCharacter() then
+                local humanoid = Player.Character:FindFirstChildOfClass("Humanoid")
+                local rootPart = Player.Character:FindFirstChild("HumanoidRootPart")
+                humanoid.PlatformStand = true
+                rootPart.Anchored = true
+                rootPart.CanCollide = false
+            end
             startFly()
         else
+            if getValidCharacter() then
+                local humanoid = Player.Character:FindFirstChildOfClass("Humanoid")
+                local rootPart = Player.Character:FindFirstChild("HumanoidRootPart")
+                humanoid.PlatformStand = false
+                rootPart.Anchored = false
+                rootPart.CanCollide = true
+            end
             stopFly()
         end
     end
@@ -800,6 +814,25 @@ CreateToggle(
 
         FlyStatus.Text = state and "ACTIVE" or "DISABLED"
         FlyStatus.TextColor3 = state and C.Success or C.TextDim
+        if state then
+            if getValidCharacter() then
+                local humanoid = Player.Character:FindFirstChildOfClass("Humanoid")
+                local rootPart = Player.Character:FindFirstChild("HumanoidRootPart")
+                humanoid.PlatformStand = true
+                rootPart.Anchored = true
+                rootPart.CanCollide = false
+            end
+            startFly()
+        else
+            if getValidCharacter() then
+                local humanoid = Player.Character:FindFirstChildOfClass("Humanoid")
+                local rootPart = Player.Character:FindFirstChild("HumanoidRootPart")
+                humanoid.PlatformStand = false
+                rootPart.Anchored = false
+                rootPart.CanCollide = true
+            end
+            stopFly()
+        end
     end
 )
 
@@ -899,6 +932,25 @@ CreateToggle(
         flying = state
         FlyStatus.Text = state and "ACTIVE" or "DISABLED"
         FlyStatus.TextColor3 = state and C.Success or C.TextDim
+        if state then
+            if getValidCharacter() then
+                local humanoid = Player.Character:FindFirstChildOfClass("Humanoid")
+                local rootPart = Player.Character:FindFirstChild("HumanoidRootPart")
+                humanoid.PlatformStand = true
+                rootPart.Anchored = true
+                rootPart.CanCollide = false
+            end
+            startFly()
+        else
+            if getValidCharacter() then
+                local humanoid = Player.Character:FindFirstChildOfClass("Humanoid")
+                local rootPart = Player.Character:FindFirstChild("HumanoidRootPart")
+                humanoid.PlatformStand = false
+                rootPart.Anchored = false
+                rootPart.CanCollide = true
+            end
+            stopFly()
+        end
     end
 )
 
@@ -931,6 +983,7 @@ CreateSlider(
     flySpeed,
     function(value)
         flySpeed = value
+        verticalSpeed = value
         SpeedNumber.Text = tostring(value)
         SpeedValue.Text = tostring(value)
     end
