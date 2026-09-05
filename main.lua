@@ -38,14 +38,9 @@ local function startFly()
     local camera = workspace.CurrentCamera
 
     humanoid.PlatformStand = true
-    -- Do not anchor or disable collides to avoid detection; use low-force BodyVelocity instead
+    -- Use CFrame for direct position changes to bypass physics detection
 
-    local bodyVelocity = Instance.new("BodyVelocity")
-    bodyVelocity.MaxForce = Vector3.new(10000, 10000, 10000)  -- Lower force to mimic natural physics and avoid detection
-    bodyVelocity.Velocity = Vector3.zero
-    bodyVelocity.Parent = rootPart
-
-    local flyConnection = RunService.Heartbeat:Connect(function(deltaTime)
+    flyConnection = RunService.Heartbeat:Connect(function(deltaTime)
         if not flying or not getValidCharacter() then
             stopFly()
             return
@@ -67,18 +62,21 @@ local function startFly()
         end
         -- Vertical movement
         if UIS:IsKeyDown(Enum.KeyCode.Space) then
-            moveVector = moveVector + Vector3.new(0, flySpeed, 0)
+            moveVector = moveVector + Vector3.new(0, 1, 0)
         end
         if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then
-            moveVector = moveVector - Vector3.new(0, flySpeed, 0)
+            moveVector = moveVector - Vector3.new(0, 1, 0)
         end
         -- Normalize and clamp speed to realistic values (max 50) to avoid anti-cheat flags
         if moveVector.Magnitude > 0 then
-            moveVector = moveVector.Unit * math.min(flySpeed, 50)
+            moveVector = moveVector.Unit * math.min(flySpeed * deltaTime, 50 * deltaTime)
         end
         -- Add small random offset to mimic natural movement and keep sending updates
-        moveVector = moveVector + Vector3.new(math.random(-0.1, 0.1), math.random(-0.1, 0.1), math.random(-0.1, 0.1))
-        bodyVelocity.Velocity = moveVector
+        moveVector = moveVector + Vector3.new(math.random(-0.01, 0.01), math.random(-0.01, 0.01), math.random(-0.01, 0.01))
+        
+        -- Apply movement via CFrame for smooth, anti-ban flight
+        local newCFrame = rootPart.CFrame + moveVector
+        rootPart.CFrame = newCFrame
     end)
 end
 
@@ -90,10 +88,6 @@ local function stopFly()
     if getValidCharacter() then
         local humanoid = Player.Character:FindFirstChildOfClass("Humanoid")
         humanoid.PlatformStand = false
-        local bodyVelocity = Player.Character.HumanoidRootPart:FindFirstChild("BodyVelocity")
-        if bodyVelocity then
-            bodyVelocity:Destroy()
-        end
     end
 end
 
