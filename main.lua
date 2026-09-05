@@ -16,7 +16,7 @@ local aimbotEnabled = false
 local aimbotSmoothness = 0.1  -- Default smoothness for camera lock
 local aimbotKeybind = Enum.KeyCode.G  -- Default keybind for aimbot toggle
 local aimbotMode = "toggle"  -- "toggle" or "hold"
-local flySpeed = 3  -- Default speed (1-10 range)
+local flySpeed = 25  -- Default speed (1-10 range)
 local verticalSpeed = flySpeed  -- Matched to flySpeed for consistent, snappier up/down
 local turnSpeed = 0.15  -- Subtle for smoothness
 local uiVisible = true
@@ -412,16 +412,21 @@ modeButton.MouseButton1Click:Connect(function()
     modeLabel.Text = "Mode: " .. aimbotMode
 end)
 
--- Fly function with fixed up/down, consistent speeds (removed deltaTime from horizontal for match), and phasing
+-- Fly function with BodyVelocity for anti-ban (sends physics updates to server)
 local function startFly()
     if not getValidCharacter() then return end
+    -- Add BodyVelocity for movement
+    local bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.Velocity = Vector3.zero
+    bodyVelocity.MaxForce = Vector3.new(400000, 400000, 400000)  -- High force for instant response
+    bodyVelocity.Parent = rootPart
     flyConnection = runService.Heartbeat:Connect(function(deltaTime)
         if not flying or not getValidCharacter() then
             stopFly()
             return
         end
         local moveVector = Vector3.zero
-        -- Horizontal movement based on camera (consistent speed without deltaTime)
+        -- Horizontal movement based on camera
         if userInputService:IsKeyDown(Enum.KeyCode.W) then
             moveVector = moveVector + camera.CFrame.LookVector
         end
@@ -434,29 +439,25 @@ local function startFly()
         if userInputService:IsKeyDown(Enum.KeyCode.D) then
             moveVector = moveVector + camera.CFrame.RightVector
         end
-        if userInputService:IsKeyDown(Enum.KeyCode.Q) then  -- Turn left (slight)
+        if userInputService:IsKeyDown(Enum.KeyCode.Q) then  -- Turn left
             moveVector = moveVector - camera.CFrame.RightVector
         end
-        if userInputService:IsKeyDown(Enum.KeyCode.E) then  -- Turn right (slight)
+        if userInputService:IsKeyDown(Enum.KeyCode.E) then  -- Turn right
             moveVector = moveVector + camera.CFrame.RightVector
         end
         -- Normalize and scale for speed
         if moveVector.Magnitude > 0 then
             moveVector = moveVector.Unit * flySpeed
         end
-        -- Vertical movement (with deltaTime for smoothness)
+        -- Vertical movement
         if userInputService:IsKeyDown(Enum.KeyCode.Space) then
             moveVector = moveVector + Vector3.new(0, verticalSpeed, 0)
         end
         if userInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
             moveVector = moveVector - Vector3.new(0, verticalSpeed, 0)
         end
-        -- Apply movement via tween for ultra-smooth, anti-ban movement
-        if moveVector.Magnitude > 0 then
-            local targetCFrame = rootPart.CFrame + moveVector * deltaTime
-            local tween = tweenService:Create(rootPart, TweenInfo.new(deltaTime, Enum.EasingStyle.Linear), {CFrame = targetCFrame})
-            tween:Play()
-        end
+        -- Set velocity to moveVector for smooth, anti-ban flight
+        bodyVelocity.Velocity = moveVector
     end)
 end
 
