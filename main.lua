@@ -192,6 +192,14 @@ local function StartFlight()
 
 	State.Flight = true
 	humanoid.AutoRotate = false
+	humanoid.PlatformStand = true
+
+	-- Disable collisions to pass through walls
+	for _, part in ipairs(character:GetDescendants()) do
+		if part:IsA("BasePart") and part ~= root then
+			part.CanCollide = false
+		end
+	end
 
 	-- Update UI
 	if FlightStatus then
@@ -324,6 +332,7 @@ local function StopFlight()
 
 	if humanoid then
 		humanoid.AutoRotate = true
+		humanoid.PlatformStand = false
 	end
 
 	State.Flight = false
@@ -1236,6 +1245,17 @@ local QuickFlight = CreateToggle(
 		else
 			StopFlight()
 		end
+	end
+)
+
+local QuickSpeed = CreateSlider(
+	Quick,
+	"Fly Speed",
+	10,
+	200,
+	State.FlySpeed,
+	function(value)
+		SetFlightSpeed(math.floor(value))
 	end
 )
 
