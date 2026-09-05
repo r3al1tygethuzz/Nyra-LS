@@ -390,35 +390,43 @@ local function startFly()
             stopFly()
             return
         end
-        local velocityVector = Vector3.zero
-        -- Horizontal movement based on camera
+        local moveVector = Vector3.zero
+        -- Horizontal movement based on camera (consistent speed without deltaTime)
         if userInputService:IsKeyDown(Enum.KeyCode.W) then
-            velocityVector = velocityVector + camera.CFrame.LookVector * flySpeed * deltaTime
+            moveVector = moveVector + camera.CFrame.LookVector
         end
         if userInputService:IsKeyDown(Enum.KeyCode.S) then
-            velocityVector = velocityVector - camera.CFrame.LookVector * flySpeed * deltaTime
+            moveVector = moveVector - camera.CFrame.LookVector
         end
         if userInputService:IsKeyDown(Enum.KeyCode.A) then
-            velocityVector = velocityVector - camera.CFrame.RightVector * flySpeed * deltaTime
+            moveVector = moveVector - camera.CFrame.RightVector
         end
         if userInputService:IsKeyDown(Enum.KeyCode.D) then
-            velocityVector = velocityVector + camera.CFrame.RightVector * flySpeed * deltaTime
+            moveVector = moveVector + camera.CFrame.RightVector
         end
         if userInputService:IsKeyDown(Enum.KeyCode.Q) then  -- Turn left (slight)
-            velocityVector = velocityVector - camera.CFrame.RightVector * turnSpeed * deltaTime
+            moveVector = moveVector - camera.CFrame.RightVector
         end
         if userInputService:IsKeyDown(Enum.KeyCode.E) then  -- Turn right (slight)
-            velocityVector = velocityVector + camera.CFrame.RightVector * turnSpeed * deltaTime
+            moveVector = moveVector + camera.CFrame.RightVector
         end
-        -- Vertical movement
+        -- Normalize and scale for speed
+        if moveVector.Magnitude > 0 then
+            moveVector = moveVector.Unit * flySpeed
+        end
+        -- Vertical movement (with deltaTime for smoothness)
         if userInputService:IsKeyDown(Enum.KeyCode.Space) then
-            velocityVector = velocityVector + Vector3.new(0, verticalSpeed * deltaTime, 0)
+            moveVector = moveVector + Vector3.new(0, verticalSpeed, 0)
         end
         if userInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-            velocityVector = velocityVector - Vector3.new(0, verticalSpeed * deltaTime, 0)
+            moveVector = moveVector - Vector3.new(0, verticalSpeed, 0)
         end
-        -- Apply movement by updating CFrame directly for smoother, less detectable fly
-        rootPart.CFrame = rootPart.CFrame + velocityVector
+        -- Apply movement via tween for ultra-smooth, anti-ban movement
+        if moveVector.Magnitude > 0 then
+            local targetCFrame = rootPart.CFrame + moveVector * deltaTime
+            local tween = tweenService:Create(rootPart, TweenInfo.new(deltaTime, Enum.EasingStyle.Linear), {CFrame = targetCFrame})
+            tween:Play()
+        end
     end)
 end
 
