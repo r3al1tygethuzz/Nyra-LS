@@ -1,557 +1,1192 @@
--- Revamped Ultra-Smooth, Anti-Ban Roblox Fly Script with Camera-Aligned Orientation, Tweened Movement, Modern CS2-Style UI (Nyra - LS), Tabs, and Enhanced Aimbot
--- Features: Fixed falling by anchoring during fly (physics off/on), camera-following up/down, ultra-smooth tweens for undetectability, bigger modern UI with tabs for Fly and Aimbot, aimbot settings (smoothness, keybind, toggle/hold), robust error handling, optimized for smoothness and ban-resistance, consistent speeds (no deltaTime on horizontal for match), and phasing through walls via CanCollide off on HumanoidRootPart only
+--// NYRA LS — MODERN UI REVAMP
+--// UI replacement for the existing Nyra LS interface
 
-local player = game.Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoid = character:FindFirstChildOfClass("Humanoid")
-local rootPart = character:FindFirstChild("HumanoidRootPart")
-local camera = game.Workspace.CurrentCamera
-local tweenService = game:GetService("TweenService")
-local userInputService = game:GetService("UserInputService")
-local runService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 
--- Variables
+local Player = Players.LocalPlayer
+local PlayerGui = Player:WaitForChild("PlayerGui")
+
+--==============================================================
+-- CONFIG
+--==============================================================
+
+local flySpeed = 25
+local aimbotSmoothness = 0.1
+local aimbotKeybind = Enum.KeyCode.G
+local aimbotMode = "Toggle"
+
 local flying = false
 local aimbotEnabled = false
-local aimbotSmoothness = 0.1  -- Default smoothness for camera lock
-local aimbotKeybind = Enum.KeyCode.G  -- Default keybind for aimbot toggle
-local aimbotMode = "toggle"  -- "toggle" or "hold"
-local flySpeed = 25  -- Default speed (1-10 range)
-local verticalSpeed = flySpeed  -- Matched to flySpeed for consistent, snappier up/down
-local turnSpeed = 0.15  -- Subtle for smoothness
-local uiVisible = true
-local currentTab = "Fly"  -- Default tab
-local flyConnection
+local currentPage = "Overview"
 
--- Utility to get valid character
-local function getValidCharacter()
-    return player.Character and player.Character.Parent and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChildOfClass("Humanoid")
+--==============================================================
+-- COLORS
+--==============================================================
+
+local C = {
+    Background = Color3.fromRGB(12, 12, 13),
+    Sidebar = Color3.fromRGB(15, 15, 16),
+    Panel = Color3.fromRGB(19, 19, 20),
+    Panel2 = Color3.fromRGB(23, 23, 24),
+
+    Border = Color3.fromRGB(39, 39, 41),
+    BorderLight = Color3.fromRGB(49, 49, 51),
+
+    Text = Color3.fromRGB(238, 238, 240),
+    TextDim = Color3.fromRGB(145, 145, 149),
+    TextDark = Color3.fromRGB(95, 95, 99),
+
+    Accent = Color3.fromRGB(190, 190, 190),
+    AccentBright = Color3.fromRGB(225, 225, 225),
+
+    Success = Color3.fromRGB(150, 210, 170),
+    Danger = Color3.fromRGB(220, 125, 125),
+}
+
+--==============================================================
+-- CLEAN OLD UI
+--==============================================================
+
+local old = PlayerGui:FindFirstChild("NyraLSUI")
+if old then
+    old:Destroy()
 end
 
--- Utility to find nearest player for aimbot (excluding self)
-local function getNearestPlayer()
-    local nearest = nil
-    local minDist = math.huge
-    for _, p in pairs(game.Players:GetPlayers()) do
-        if p ~= player and p.Character and p.Character:FindFirstChild("HumanoidRootPart") and p.Character.Humanoid.Health > 0 then
-            local dist = (rootPart.Position - p.Character.HumanoidRootPart.Position).Magnitude
-            if dist < minDist then
-                minDist = dist
-                nearest = p
-            end
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "NyraLSUI"
+Gui.ResetOnSpawn = false
+Gui.IgnoreGuiInset = true
+Gui.Parent = PlayerGui
+
+--==============================================================
+-- HELPERS
+--==============================================================
+
+local function Corner(obj, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 8)
+    c.Parent = obj
+    return c
+end
+
+local function Stroke(obj, color, thickness, transparency)
+    local s = Instance.new("UIStroke")
+    s.Color = color or C.Border
+    s.Thickness = thickness or 1
+    s.Transparency = transparency or 0
+    s.Parent = obj
+    return s
+end
+
+local function Tween(obj, info, props)
+    return TweenService:Create(
+        obj,
+        info or TweenInfo.new(
+            0.18,
+            Enum.EasingStyle.Quint,
+            Enum.EasingDirection.Out
+        ),
+        props
+    )
+end
+
+local function Label(parent, text, size, position, font, color)
+    local l = Instance.new("TextLabel")
+    l.Parent = parent
+    l.BackgroundTransparency = 1
+    l.Text = text
+    l.TextColor3 = color or C.Text
+    l.Font = font or Enum.Font.Gotham
+    l.TextSize = size or 14
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Position = position or UDim2.new()
+    return l
+end
+
+--==============================================================
+-- MAIN WINDOW
+--==============================================================
+
+local Shadow = Instance.new("Frame")
+Shadow.Parent = Gui
+Shadow.AnchorPoint = Vector2.new(0.5, 0.5)
+Shadow.Position = UDim2.fromScale(0.5, 0.5)
+Shadow.Size = UDim2.new(0, 1040, 0, 650)
+Shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+Shadow.BackgroundTransparency = 0.45
+Shadow.BorderSizePixel = 0
+Corner(Shadow, 14)
+
+local Main = Instance.new("Frame")
+Main.Parent = Gui
+Main.AnchorPoint = Vector2.new(0.5, 0.5)
+Main.Position = UDim2.fromScale(0.5, 0.5)
+Main.Size = UDim2.new(0, 1000, 0, 610)
+Main.BackgroundColor3 = C.Background
+Main.BorderSizePixel = 0
+Main.Active = true
+
+Corner(Main, 12)
+Stroke(Main, C.Border, 1)
+
+--==============================================================
+-- HEADER
+--==============================================================
+
+local Header = Instance.new("Frame")
+Header.Parent = Main
+Header.Size = UDim2.new(1, 0, 0, 58)
+Header.BackgroundColor3 = C.Panel
+Header.BorderSizePixel = 0
+
+Corner(Header, 12)
+
+local HeaderLine = Instance.new("Frame")
+HeaderLine.Parent = Header
+HeaderLine.Position = UDim2.new(0, 0, 1, -1)
+HeaderLine.Size = UDim2.new(1, 0, 0, 1)
+HeaderLine.BackgroundColor3 = C.Border
+HeaderLine.BorderSizePixel = 0
+
+local Logo = Instance.new("Frame")
+Logo.Parent = Header
+Logo.Position = UDim2.new(0, 18, 0.5, -16)
+Logo.Size = UDim2.new(0, 32, 0, 32)
+Logo.BackgroundColor3 = C.Panel2
+Logo.BorderSizePixel = 0
+Corner(Logo, 8)
+Stroke(Logo, C.BorderLight)
+
+local LogoText = Label(
+    Logo,
+    "N",
+    15,
+    UDim2.new(0, 0, 0, 6),
+    Enum.Font.GothamBold,
+    C.Text
+)
+LogoText.Size = UDim2.new(1, 0, 0, 18)
+LogoText.TextXAlignment = Enum.TextXAlignment.Center
+
+local Title = Label(
+    Header,
+    "NYRA",
+    14,
+    UDim2.new(0, 60, 0, 10),
+    Enum.Font.GothamBold
+)
+
+local Subtitle = Label(
+    Header,
+    "LS / CONTROL PANEL",
+    9,
+    UDim2.new(0, 60, 0, 29),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
+
+-- online indicator
+
+local StatusDot = Instance.new("Frame")
+StatusDot.Parent = Header
+StatusDot.Position = UDim2.new(1, -128, 0.5, -4)
+StatusDot.Size = UDim2.new(0, 8, 0, 8)
+StatusDot.BackgroundColor3 = C.Success
+StatusDot.BorderSizePixel = 0
+Corner(StatusDot, 20)
+
+local StatusText = Label(
+    Header,
+    "ONLINE",
+    10,
+    UDim2.new(1, -113, 0, 20),
+    Enum.Font.GothamBold,
+    C.TextDim
+)
+StatusText.Size = UDim2.new(0, 55, 0, 18)
+
+--==============================================================
+-- SIDEBAR
+--==============================================================
+
+local Sidebar = Instance.new("Frame")
+Sidebar.Parent = Main
+Sidebar.Position = UDim2.new(0, 0, 0, 58)
+Sidebar.Size = UDim2.new(0, 190, 1, -58)
+Sidebar.BackgroundColor3 = C.Sidebar
+Sidebar.BorderSizePixel = 0
+
+local SideLine = Instance.new("Frame")
+SideLine.Parent = Sidebar
+SideLine.Position = UDim2.new(1, -1, 0, 0)
+SideLine.Size = UDim2.new(0, 1, 1, 0)
+SideLine.BackgroundColor3 = C.Border
+SideLine.BorderSizePixel = 0
+
+local NavTitle = Label(
+    Sidebar,
+    "NAVIGATION",
+    9,
+    UDim2.new(0, 18, 0, 24),
+    Enum.Font.GothamBold,
+    C.TextDark
+)
+
+local Navigation = Instance.new("Frame")
+Navigation.Parent = Sidebar
+Navigation.Position = UDim2.new(0, 10, 0, 50)
+Navigation.Size = UDim2.new(1, -20, 0, 180)
+Navigation.BackgroundTransparency = 1
+
+local NavLayout = Instance.new("UIListLayout")
+NavLayout.Parent = Navigation
+NavLayout.Padding = UDim.new(0, 5)
+
+local Pages = {}
+
+local function CreateNav(name, icon)
+    local Button = Instance.new("TextButton")
+    Button.Parent = Navigation
+    Button.Size = UDim2.new(1, 0, 0, 40)
+    Button.BackgroundColor3 = C.Sidebar
+    Button.BorderSizePixel = 0
+    Button.AutoButtonColor = false
+    Button.Text = ""
+
+    Corner(Button, 7)
+
+    local Icon = Label(
+        Button,
+        icon,
+        14,
+        UDim2.new(0, 12, 0, 10),
+        Enum.Font.GothamMedium,
+        C.TextDim
+    )
+
+    Icon.Size = UDim2.new(0, 20, 0, 20)
+    Icon.TextXAlignment = Enum.TextXAlignment.Center
+
+    local Text = Label(
+        Button,
+        name,
+        12,
+        UDim2.new(0, 42, 0, 11),
+        Enum.Font.GothamMedium,
+        C.TextDim
+    )
+
+    Text.Size = UDim2.new(1, -50, 0, 20)
+
+    Pages[name] = {
+        Button = Button,
+        Icon = Icon,
+        Text = Text
+    }
+
+    Button.MouseEnter:Connect(function()
+        if currentPage ~= name then
+            Tween(Button, nil, {
+                BackgroundColor3 = C.Panel
+            }):Play()
+        end
+    end)
+
+    Button.MouseLeave:Connect(function()
+        if currentPage ~= name then
+            Tween(Button, nil, {
+                BackgroundColor3 = C.Sidebar
+            }):Play()
+        end
+    end)
+
+    return Button
+end
+
+local OverviewButton = CreateNav("Overview", "◈")
+local FlyButton = CreateNav("Fly", "◇")
+local AimButton = CreateNav("Aimbot", "◎")
+
+local SettingsTitle = Label(
+    Sidebar,
+    "SYSTEM",
+    9,
+    UDim2.new(0, 18, 0, 260),
+    Enum.Font.GothamBold,
+    C.TextDark
+)
+
+local SettingsButton = Instance.new("TextButton")
+SettingsButton.Parent = Sidebar
+SettingsButton.Position = UDim2.new(0, 10, 0, 285)
+SettingsButton.Size = UDim2.new(1, -20, 0, 40)
+SettingsButton.BackgroundColor3 = C.Sidebar
+SettingsButton.BorderSizePixel = 0
+SettingsButton.AutoButtonColor = false
+SettingsButton.Text = ""
+
+Corner(SettingsButton, 7)
+
+local SettingsIcon = Label(
+    SettingsButton,
+    "⚙",
+    14,
+    UDim2.new(0, 12, 0, 10),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
+SettingsIcon.Size = UDim2.new(0, 20, 0, 20)
+SettingsIcon.TextXAlignment = Enum.TextXAlignment.Center
+
+local SettingsText = Label(
+    SettingsButton,
+    "Settings",
+    12,
+    UDim2.new(0, 42, 0, 11),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
+
+-- footer
+
+local Version = Label(
+    Sidebar,
+    "NYRA LS",
+    9,
+    UDim2.new(0, 18, 1, -44),
+    Enum.Font.GothamBold,
+    C.TextDim
+)
+
+local VersionNumber = Label(
+    Sidebar,
+    "build 1.0.0",
+    8,
+    UDim2.new(0, 18, 1, -28),
+    Enum.Font.GothamMedium,
+    C.TextDark
+)
+
+--==============================================================
+-- CONTENT
+--==============================================================
+
+local Content = Instance.new("Frame")
+Content.Parent = Main
+Content.Position = UDim2.new(0, 190, 0, 58)
+Content.Size = UDim2.new(1, -190, 1, -58)
+Content.BackgroundColor3 = C.Background
+Content.BorderSizePixel = 0
+
+local PagesContainer = Instance.new("Frame")
+PagesContainer.Parent = Content
+PagesContainer.Position = UDim2.new(0, 28, 0, 26)
+PagesContainer.Size = UDim2.new(1, -56, 1, -52)
+PagesContainer.BackgroundTransparency = 1
+
+--==============================================================
+-- PAGE MANAGEMENT
+--==============================================================
+
+local PageFrames = {}
+
+local function CreatePage(name)
+    local Frame = Instance.new("Frame")
+    Frame.Parent = PagesContainer
+    Frame.Size = UDim2.fromScale(1, 1)
+    Frame.BackgroundTransparency = 1
+    Frame.Visible = false
+
+    PageFrames[name] = Frame
+    return Frame
+end
+
+local function SelectPage(name)
+    currentPage = name
+
+    for pageName, frame in pairs(PageFrames) do
+        frame.Visible = pageName == name
+    end
+
+    for pageName, data in pairs(Pages) do
+        local selected = pageName == name
+
+        Tween(data.Button, nil, {
+            BackgroundColor3 = selected and C.Panel2 or C.Sidebar
+        }):Play()
+
+        Tween(data.Icon, nil, {
+            TextColor3 = selected and C.Text or C.TextDim
+        }):Play()
+
+        Tween(data.Text, nil, {
+            TextColor3 = selected and C.Text or C.TextDim
+        }):Play()
+    end
+end
+
+--==============================================================
+-- COMMON CARD
+--==============================================================
+
+local function CreateCard(parent, position, size)
+    local Card = Instance.new("Frame")
+    Card.Parent = parent
+    Card.Position = position
+    Card.Size = size
+    Card.BackgroundColor3 = C.Panel
+    Card.BorderSizePixel = 0
+
+    Corner(Card, 9)
+    Stroke(Card, C.Border, 1)
+
+    return Card
+end
+
+local function CardTitle(parent, text, subtext)
+    local title = Label(
+        parent,
+        text,
+        13,
+        UDim2.new(0, 16, 0, 14),
+        Enum.Font.GothamBold
+    )
+
+    local sub = Label(
+        parent,
+        subtext or "",
+        9,
+        UDim2.new(0, 16, 0, 34),
+        Enum.Font.GothamMedium,
+        C.TextDim
+    )
+
+    return title, sub
+end
+
+--==============================================================
+-- TOGGLE
+--==============================================================
+
+local function CreateToggle(parent, position, enabled, callback)
+    local Holder = Instance.new("TextButton")
+    Holder.Parent = parent
+    Holder.Position = position
+    Holder.Size = UDim2.new(0, 46, 0, 24)
+    Holder.BackgroundColor3 = enabled and C.Accent or C.Panel2
+    Holder.BorderSizePixel = 0
+    Holder.Text = ""
+    Holder.AutoButtonColor = false
+
+    Corner(Holder, 20)
+    Stroke(Holder, C.BorderLight)
+
+    local Knob = Instance.new("Frame")
+    Knob.Parent = Holder
+    Knob.Size = UDim2.new(0, 18, 0, 18)
+    Knob.Position = enabled
+        and UDim2.new(1, -21, 0.5, -9)
+        or UDim2.new(0, 3, 0.5, -9)
+
+    Knob.BackgroundColor3 = enabled and C.Background or C.TextDim
+    Knob.BorderSizePixel = 0
+
+    Corner(Knob, 20)
+
+    Holder.MouseButton1Click:Connect(function()
+        enabled = not enabled
+
+        Tween(Holder, nil, {
+            BackgroundColor3 = enabled and C.Accent or C.Panel2
+        }):Play()
+
+        Tween(Knob, nil, {
+            Position = enabled
+                and UDim2.new(1, -21, 0.5, -9)
+                or UDim2.new(0, 3, 0.5, -9),
+
+            BackgroundColor3 = enabled and C.Background or C.TextDim
+        }):Play()
+
+        if callback then
+            callback(enabled)
+        end
+    end)
+
+    return Holder
+end
+
+--==============================================================
+-- SLIDER
+--==============================================================
+
+local function CreateSlider(parent, position, width, min, max, value, callback)
+    local Holder = Instance.new("Frame")
+    Holder.Parent = parent
+    Holder.Position = position
+    Holder.Size = UDim2.new(0, width, 0, 34)
+    Holder.BackgroundTransparency = 1
+
+    local Track = Instance.new("Frame")
+    Track.Parent = Holder
+    Track.Position = UDim2.new(0, 0, 0.5, -3)
+    Track.Size = UDim2.new(1, 0, 0, 6)
+    Track.BackgroundColor3 = C.Panel2
+    Track.BorderSizePixel = 0
+
+    Corner(Track, 10)
+
+    local Fill = Instance.new("Frame")
+    Fill.Parent = Track
+    Fill.Size = UDim2.new((value - min) / (max - min), 0, 1, 0)
+    Fill.BackgroundColor3 = C.Accent
+    Fill.BorderSizePixel = 0
+
+    Corner(Fill, 10)
+
+    local Knob = Instance.new("Frame")
+    Knob.Parent = Track
+    Knob.Size = UDim2.new(0, 12, 0, 12)
+    Knob.AnchorPoint = Vector2.new(0.5, 0.5)
+    Knob.Position = UDim2.new((value - min) / (max - min), 0, 0.5, 0)
+    Knob.BackgroundColor3 = C.Text
+    Knob.BorderSizePixel = 0
+
+    Corner(Knob, 20)
+
+    local Dragging = false
+
+    local function Update(x)
+        local relative = math.clamp(
+            (x - Track.AbsolutePosition.X) / Track.AbsoluteSize.X,
+            0,
+            1
+        )
+
+        local newValue = min + ((max - min) * relative)
+
+        if math.floor(max - min) > 10 then
+            newValue = math.floor(newValue)
+        else
+            newValue = math.floor(newValue * 100) / 100
+        end
+
+        Fill.Size = UDim2.new(relative, 0, 1, 0)
+        Knob.Position = UDim2.new(relative, 0, 0.5, 0)
+
+        if callback then
+            callback(newValue)
         end
     end
-    return nearest
+
+    Holder.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            Dragging = true
+            Update(input.Position.X)
+        end
+    end)
+
+    UIS.InputChanged:Connect(function(input)
+        if Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            Update(input.Position.X)
+        end
+    end)
+
+    UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            Dragging = false
+        end
+    end)
+
+    return Holder
 end
 
--- Create revamped modern CS2-style UI (bigger, tabbed, sleek)
-local screenGui = Instance.new("ScreenGui", player.PlayerGui)
-screenGui.Name = "NyraLSUI"
-screenGui.ResetOnSpawn = false
+--==============================================================
+-- OVERVIEW PAGE
+--==============================================================
 
-local mainFrame = Instance.new("Frame", screenGui)
-mainFrame.Size = UDim2.new(0, 600, 0, 450)  -- Way bigger for better usability
-mainFrame.Position = UDim2.new(0.5, -300, 0.5, -225)  -- Centered
-mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-mainFrame.BorderSizePixel = 0
-mainFrame.BackgroundTransparency = 0.05
-mainFrame.Visible = uiVisible
-mainFrame.Active = true
-mainFrame.Draggable = true
+local Overview = CreatePage("Overview")
 
--- Glow effect for modern look
-local uiStroke = Instance.new("UIStroke", mainFrame)
-uiStroke.Color = Color3.fromRGB(50, 50, 50)
-uiStroke.Thickness = 2
-uiStroke.Transparency = 0.5
+local OverviewTitle = Label(
+    Overview,
+    "Overview",
+    22,
+    UDim2.new(0, 0, 0, 0),
+    Enum.Font.GothamBold
+)
 
--- Rounded corners, gradient, and shadow
-local uiCorner = Instance.new("UICorner", mainFrame)
-uiCorner.CornerRadius = UDim.new(0, 15)
-local frameGradient = Instance.new("UIGradient", mainFrame)
-frameGradient.Color = ColorSequence.new{
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(10, 10, 10)),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(30, 30, 30)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 50, 50))
-}
-frameGradient.Rotation = 90
-local shadow = Instance.new("Frame", mainFrame.Parent)
-shadow.Size = UDim2.new(1, 20, 1, 20)
-shadow.Position = UDim2.new(0, -10, 0, -10)
-shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-shadow.BackgroundTransparency = 0.7
-shadow.BorderSizePixel = 0
-local shadowCorner = Instance.new("UICorner", shadow)
-shadowCorner.CornerRadius = UDim.new(0, 15)
+local OverviewSub = Label(
+    Overview,
+    "Quick control and current system status.",
+    10,
+    UDim2.new(0, 0, 0, 32),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
 
--- Fade-in animation for UI
-tweenService:Create(mainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {BackgroundTransparency = 0.05}):Play()
-tweenService:Create(shadow, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {BackgroundTransparency = 0.7}):Play()
+-- status cards
 
--- Title
-local titleLabel = Instance.new("TextLabel", mainFrame)
-titleLabel.Size = UDim2.new(1, 0, 0, 50)
-titleLabel.Position = UDim2.new(0, 0, 0, 0)
-titleLabel.Text = "Nyra - LS"
-titleLabel.BackgroundTransparency = 1
-titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleLabel.Font = Enum.Font.SourceSansBold
-titleLabel.TextScaled = true
+local FlyCard = CreateCard(
+    Overview,
+    UDim2.new(0, 0, 0, 72),
+    UDim2.new(0.31, -8, 0, 92)
+)
 
--- Minimize button
-local minimizeButton = Instance.new("TextButton", mainFrame)
-minimizeButton.Size = UDim2.new(0, 40, 0, 40)
-minimizeButton.Position = UDim2.new(0.92, 0, 0.02, 0)
-minimizeButton.Text = "−"
-minimizeButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-minimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-minimizeButton.Font = Enum.Font.SourceSansBold
-local minCorner = Instance.new("UICorner", minimizeButton)
-minCorner.CornerRadius = UDim.new(0, 8)
-minimizeButton.MouseEnter:Connect(function()
-    tweenService:Create(minimizeButton, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(100, 100, 100)}):Play()
+local AimCard = CreateCard(
+    Overview,
+    UDim2.new(0.345, 0, 0, 72),
+    UDim2.new(0.31, -8, 0, 92)
+)
+
+local SpeedCard = CreateCard(
+    Overview,
+    UDim2.new(0.69, 0, 0, 72),
+    UDim2.new(0.31, -8, 0, 92)
+)
+
+CardTitle(FlyCard, "FLIGHT", "Movement module")
+
+local FlyStatus = Label(
+    FlyCard,
+    "DISABLED",
+    17,
+    UDim2.new(0, 16, 0, 54),
+    Enum.Font.GothamBold,
+    C.TextDim
+)
+
+CardTitle(AimCard, "AIM ASSIST", "Targeting module")
+
+local AimStatus = Label(
+    AimCard,
+    "DISABLED",
+    17,
+    UDim2.new(0, 16, 0, 54),
+    Enum.Font.GothamBold,
+    C.TextDim
+)
+
+CardTitle(SpeedCard, "FLY SPEED", "Current movement speed")
+
+local SpeedValue = Label(
+    SpeedCard,
+    tostring(flySpeed),
+    24,
+    UDim2.new(0, 16, 0, 49),
+    Enum.Font.GothamBold
+)
+
+-- quick control card
+
+local Quick = CreateCard(
+    Overview,
+    UDim2.new(0, 0, 0, 184),
+    UDim2.new(1, 0, 0, 180)
+)
+
+CardTitle(
+    Quick,
+    "QUICK CONTROL",
+    "Toggle your primary modules"
+)
+
+local FlyQuickText = Label(
+    Quick,
+    "Fly",
+    12,
+    UDim2.new(0, 18, 0, 72),
+    Enum.Font.GothamMedium
+)
+
+local FlyQuickSub = Label(
+    Quick,
+    "Camera-aligned movement",
+    9,
+    UDim2.new(0, 18, 0, 91),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
+
+CreateToggle(
+    Quick,
+    UDim2.new(1, -66, 0, 72),
+    flying,
+    function(state)
+        flying = state
+
+        FlyStatus.Text = state and "ACTIVE" or "DISABLED"
+        FlyStatus.TextColor3 = state and C.Success or C.TextDim
+    end
+)
+
+local Divider = Instance.new("Frame")
+Divider.Parent = Quick
+Divider.Position = UDim2.new(0, 18, 0, 119)
+Divider.Size = UDim2.new(1, -36, 0, 1)
+Divider.BackgroundColor3 = C.Border
+Divider.BorderSizePixel = 0
+
+local AimQuickText = Label(
+    Quick,
+    "Aimbot",
+    12,
+    UDim2.new(0, 18, 0, 134),
+    Enum.Font.GothamMedium
+)
+
+local AimQuickSub = Label(
+    Quick,
+    "Smooth camera targeting",
+    9,
+    UDim2.new(0, 18, 0, 153),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
+
+CreateToggle(
+    Quick,
+    UDim2.new(1, -66, 0, 136),
+    aimbotEnabled,
+    function(state)
+        aimbotEnabled = state
+
+        AimStatus.Text = state and "ACTIVE" or "DISABLED"
+        AimStatus.TextColor3 = state and C.Success or C.TextDim
+    end
+)
+
+--==============================================================
+-- FLY PAGE
+--==============================================================
+
+local FlyPage = CreatePage("Fly")
+
+local FlyTitle = Label(
+    FlyPage,
+    "Flight",
+    22,
+    UDim2.new(0, 0, 0, 0),
+    Enum.Font.GothamBold
+)
+
+local FlySub = Label(
+    FlyPage,
+    "Configure movement and flight behavior.",
+    10,
+    UDim2.new(0, 0, 0, 32),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
+
+local FlightCard = CreateCard(
+    FlyPage,
+    UDim2.new(0, 0, 0, 72),
+    UDim2.new(1, 0, 0, 245)
+)
+
+CardTitle(
+    FlightCard,
+    "FLIGHT CONTROL",
+    "Movement configuration"
+)
+
+local FlyEnabledText = Label(
+    FlightCard,
+    "Enable Fly",
+    12,
+    UDim2.new(0, 18, 0, 68),
+    Enum.Font.GothamMedium
+)
+
+local FlyEnabledSub = Label(
+    FlightCard,
+    "Toggle the flight controller",
+    9,
+    UDim2.new(0, 18, 0, 88),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
+
+CreateToggle(
+    FlightCard,
+    UDim2.new(1, -66, 0, 68),
+    flying,
+    function(state)
+        flying = state
+        FlyStatus.Text = state and "ACTIVE" or "DISABLED"
+        FlyStatus.TextColor3 = state and C.Success or C.TextDim
+    end
+)
+
+local SpeedText = Label(
+    FlightCard,
+    "Movement Speed",
+    12,
+    UDim2.new(0, 18, 0, 125),
+    Enum.Font.GothamMedium
+)
+
+local SpeedNumber = Label(
+    FlightCard,
+    tostring(flySpeed),
+    12,
+    UDim2.new(1, -65, 0, 125),
+    Enum.Font.GothamBold,
+    C.Text
+)
+
+SpeedNumber.Size = UDim2.new(0, 45, 0, 20)
+SpeedNumber.TextXAlignment = Enum.TextXAlignment.Right
+
+CreateSlider(
+    FlightCard,
+    UDim2.new(0, 18, 0, 154),
+    430,
+    1,
+    100,
+    flySpeed,
+    function(value)
+        flySpeed = value
+        SpeedNumber.Text = tostring(value)
+        SpeedValue.Text = tostring(value)
+    end
+)
+
+local ControlsTitle = Label(
+    FlightCard,
+    "CONTROLS",
+    9,
+    UDim2.new(0, 18, 0, 194),
+    Enum.Font.GothamBold,
+    C.TextDark
+)
+
+local Controls = Label(
+    FlightCard,
+    "W A S D    MOVE\nSPACE       ASCEND\nSHIFT        DESCEND\nF            TOGGLE",
+    10,
+    UDim2.new(0, 18, 0, 212),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
+
+--==============================================================
+-- AIMBOT PAGE
+--==============================================================
+
+local AimPage = CreatePage("Aimbot")
+
+local AimTitle = Label(
+    AimPage,
+    "Aimbot",
+    22,
+    UDim2.new(0, 0, 0, 0),
+    Enum.Font.GothamBold
+)
+
+local AimSub = Label(
+    AimPage,
+    "Configure targeting behavior and input.",
+    10,
+    UDim2.new(0, 0, 0, 32),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
+
+local AimCard = CreateCard(
+    AimPage,
+    UDim2.new(0, 0, 0, 72),
+    UDim2.new(1, 0, 0, 330)
+)
+
+CardTitle(
+    AimCard,
+    "AIM CONFIGURATION",
+    "Targeting settings"
+)
+
+local AimEnableText = Label(
+    AimCard,
+    "Enable Aimbot",
+    12,
+    UDim2.new(0, 18, 0, 68),
+    Enum.Font.GothamMedium
+)
+
+local AimEnableSub = Label(
+    AimCard,
+    "Enable camera targeting",
+    9,
+    UDim2.new(0, 18, 0, 88),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
+
+CreateToggle(
+    AimCard,
+    UDim2.new(1, -66, 0, 68),
+    aimbotEnabled,
+    function(state)
+        aimbotEnabled = state
+
+        AimStatus.Text = state and "ACTIVE" or "DISABLED"
+        AimStatus.TextColor3 = state and C.Success or C.TextDim
+    end
+)
+
+local SmoothText = Label(
+    AimCard,
+    "Smoothness",
+    12,
+    UDim2.new(0, 18, 0, 125),
+    Enum.Font.GothamMedium
+)
+
+local SmoothValue = Label(
+    AimCard,
+    string.format("%.2f", aimbotSmoothness),
+    12,
+    UDim2.new(1, -65, 0, 125),
+    Enum.Font.GothamBold
+)
+
+SmoothValue.Size = UDim2.new(0, 45, 0, 20)
+SmoothValue.TextXAlignment = Enum.TextXAlignment.Right
+
+CreateSlider(
+    AimCard,
+    UDim2.new(0, 18, 0, 154),
+    430,
+    0.01,
+    1,
+    aimbotSmoothness,
+    function(value)
+        aimbotSmoothness = value
+        SmoothValue.Text = string.format("%.2f", value)
+    end
+)
+
+local ModeText = Label(
+    AimCard,
+    "Activation Mode",
+    12,
+    UDim2.new(0, 18, 0, 202),
+    Enum.Font.GothamMedium
+)
+
+local ModeButton = Instance.new("TextButton")
+ModeButton.Parent = AimCard
+ModeButton.Position = UDim2.new(0, 18, 0, 231)
+ModeButton.Size = UDim2.new(0, 205, 0, 38)
+ModeButton.BackgroundColor3 = C.Panel2
+ModeButton.BorderSizePixel = 0
+ModeButton.Text = "  " .. aimbotMode
+ModeButton.TextColor3 = C.Text
+ModeButton.Font = Enum.Font.GothamMedium
+ModeButton.TextSize = 11
+ModeButton.TextXAlignment = Enum.TextXAlignment.Left
+ModeButton.AutoButtonColor = false
+
+Corner(ModeButton, 7)
+Stroke(ModeButton, C.BorderLight)
+
+ModeButton.MouseButton1Click:Connect(function()
+    aimbotMode = aimbotMode == "Toggle" and "Hold" or "Toggle"
+    ModeButton.Text = "  " .. aimbotMode
 end)
-minimizeButton.MouseLeave:Connect(function()
-    tweenService:Create(minimizeButton, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(80, 80, 80)}):Play()
-end)
-minimizeButton.MouseButton1Click:Connect(function()
-    uiVisible = not uiVisible
-    mainFrame.Visible = uiVisible
-    minimizeButton.Text = uiVisible and "−" or "+"
-end)
 
--- Tab buttons
-local tabFrame = Instance.new("Frame", mainFrame)
-tabFrame.Size = UDim2.new(1, 0, 0, 50)
-tabFrame.Position = UDim2.new(0, 0, 0.1, 0)
-tabFrame.BackgroundTransparency = 1
+local KeyText = Label(
+    AimCard,
+    "Keybind",
+    12,
+    UDim2.new(0, 250, 0, 202),
+    Enum.Font.GothamMedium
+)
 
-local flyTab = Instance.new("TextButton", tabFrame)
-flyTab.Size = UDim2.new(0.5, 0, 1, 0)
-flyTab.Position = UDim2.new(0, 0, 0, 0)
-flyTab.Text = "Fly"
-flyTab.BackgroundColor3 = currentTab == "Fly" and Color3.fromRGB(100, 150, 100) or Color3.fromRGB(50, 50, 50)
-flyTab.TextColor3 = Color3.fromRGB(255, 255, 255)
-flyTab.Font = Enum.Font.SourceSansBold
-flyTab.MouseButton1Click:Connect(function()
-    currentTab = "Fly"
-    flyTab.BackgroundColor3 = Color3.fromRGB(100, 150, 100)
-    aimbotTab.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    updateTabs()
-end)
+local KeyButton = Instance.new("TextButton")
+KeyButton.Parent = AimCard
+KeyButton.Position = UDim2.new(0, 250, 0, 231)
+KeyButton.Size = UDim2.new(0, 205, 0, 38)
+KeyButton.BackgroundColor3 = C.Panel2
+KeyButton.BorderSizePixel = 0
+KeyButton.Text = "  " .. aimbotKeybind.Name
+KeyButton.TextColor3 = C.Text
+KeyButton.Font = Enum.Font.GothamMedium
+KeyButton.TextSize = 11
+KeyButton.TextXAlignment = Enum.TextXAlignment.Left
+KeyButton.AutoButtonColor = false
 
-local aimbotTab = Instance.new("TextButton", tabFrame)
-aimbotTab.Size = UDim2.new(0.5, 0, 1, 0)
-aimbotTab.Position = UDim2.new(0.5, 0, 0, 0)
-aimbotTab.Text = "Aimbot"
-aimbotTab.BackgroundColor3 = currentTab == "Aimbot" and Color3.fromRGB(100, 150, 100) or Color3.fromRGB(50, 50, 50)
-aimbotTab.TextColor3 = Color3.fromRGB(255, 255, 255)
-aimbotTab.Font = Enum.Font.SourceSansBold
-aimbotTab.MouseButton1Click:Connect(function()
-    currentTab = "Aimbot"
-    aimbotTab.BackgroundColor3 = Color3.fromRGB(100, 150, 100)
-    flyTab.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    updateTabs()
+Corner(KeyButton, 7)
+Stroke(KeyButton, C.BorderLight)
+
+KeyButton.MouseButton1Click:Connect(function()
+    KeyButton.Text = "  Press a key..."
+
+    local connection
+    connection = UIS.InputBegan:Connect(function(input, processed)
+        if not processed and input.KeyCode ~= Enum.KeyCode.Unknown then
+            aimbotKeybind = input.KeyCode
+            KeyButton.Text = "  " .. aimbotKeybind.Name
+            connection:Disconnect()
+        end
+    end)
 end)
 
--- Tab content frames
-local flyFrame = Instance.new("Frame", mainFrame)
-flyFrame.Size = UDim2.new(1, -20, 0, 320)
-flyFrame.Position = UDim2.new(0, 10, 0, 110)
-flyFrame.BackgroundTransparency = 1
-flyFrame.Visible = currentTab == "Fly"
+--==============================================================
+-- SETTINGS PAGE
+--==============================================================
 
-local aimbotFrame = Instance.new("Frame", mainFrame)
-aimbotFrame.Size = UDim2.new(1, -20, 0, 320)
-aimbotFrame.Position = UDim2.new(0, 10, 0, 110)
-aimbotFrame.BackgroundTransparency = 1
-aimbotFrame.Visible = currentTab == "Aimbot"
+local Settings = CreatePage("Settings")
 
-local function updateTabs()
-    flyFrame.Visible = currentTab == "Fly"
-    aimbotFrame.Visible = currentTab == "Aimbot"
-end
+local SettingsTitleMain = Label(
+    Settings,
+    "Settings",
+    22,
+    UDim2.new(0, 0, 0, 0),
+    Enum.Font.GothamBold
+)
 
--- Fly tab content
-local flyToggle = Instance.new("TextButton", flyFrame)
-flyToggle.Size = UDim2.new(0.4, 0, 0, 55)
-flyToggle.Position = UDim2.new(0.05, 0, 0.05, 0)
-flyToggle.Text = flying and "🚫 Fly Off" or "🚀 Fly On"
-flyToggle.BackgroundColor3 = flying and Color3.fromRGB(150, 100, 100) or Color3.fromRGB(100, 150, 100)
-flyToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-flyToggle.Font = Enum.Font.SourceSansBold
-local flyCorner = Instance.new("UICorner", flyToggle)
-flyCorner.CornerRadius = UDim.new(0, 10)
-flyToggle.MouseEnter:Connect(function()
-    tweenService:Create(flyToggle, TweenInfo.new(0.2), {BackgroundColor3 = flying and Color3.fromRGB(170, 120, 120) or Color3.fromRGB(120, 170, 120)}):Play()
+local SettingsSub = Label(
+    Settings,
+    "Interface and utility preferences.",
+    10,
+    UDim2.new(0, 0, 0, 32),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
+
+local SettingsCard = CreateCard(
+    Settings,
+    UDim2.new(0, 0, 0, 72),
+    UDim2.new(1, 0, 0, 245)
+)
+
+CardTitle(
+    SettingsCard,
+    "INTERFACE",
+    "Nyra appearance and behavior"
+)
+
+local AnimText = Label(
+    SettingsCard,
+    "Animations",
+    12,
+    UDim2.new(0, 18, 0, 68),
+    Enum.Font.GothamMedium
+)
+
+local AnimSub = Label(
+    SettingsCard,
+    "Smooth interface transitions",
+    9,
+    UDim2.new(0, 18, 0, 88),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
+
+CreateToggle(
+    SettingsCard,
+    UDim2.new(1, -66, 0, 68),
+    true
+)
+
+local BorderText = Label(
+    SettingsCard,
+    "Minimal borders",
+    12,
+    UDim2.new(0, 18, 0, 125),
+    Enum.Font.GothamMedium
+)
+
+local BorderSub = Label(
+    SettingsCard,
+    "Keep the interface clean and subtle",
+    9,
+    UDim2.new(0, 18, 0, 145),
+    Enum.Font.GothamMedium,
+    C.TextDim
+)
+
+CreateToggle(
+    SettingsCard,
+    UDim2.new(1, -66, 0, 125),
+    true
+)
+
+--==============================================================
+-- NAVIGATION
+--==============================================================
+
+OverviewButton.MouseButton1Click:Connect(function()
+    SelectPage("Overview")
 end)
-flyToggle.MouseLeave:Connect(function()
-    tweenService:Create(flyToggle, TweenInfo.new(0.2), {BackgroundColor3 = flying and Color3.fromRGB(150, 100, 100) or Color3.fromRGB(100, 150, 100)}):Play()
+
+FlyButton.MouseButton1Click:Connect(function()
+    SelectPage("Fly")
 end)
-flyToggle.MouseButton1Click:Connect(function()
-    flying = not flying
-    flyToggle.Text = flying and "🚫 Fly Off" or "🚀 Fly On"
-    flyToggle.BackgroundColor3 = flying and Color3.fromRGB(150, 100, 100) or Color3.fromRGB(100, 150, 100)
-    if flying then
-        humanoid.PlatformStand = true
-        rootPart.Anchored = true  -- Anchor to prevent falling and disable gravity
-        rootPart.CanCollide = false  -- Disable collisions on root for phasing through walls (keeps other parts collidable)
-        startFly()
-    else
-        humanoid.PlatformStand = false
-        rootPart.Anchored = false  -- Unanchor to restore physics
-        rootPart.CanCollide = true  -- Restore collisions
-        stopFly()
+
+AimButton.MouseButton1Click:Connect(function()
+    SelectPage("Aimbot")
+end)
+
+SettingsButton.MouseButton1Click:Connect(function()
+    SelectPage("Settings")
+end)
+
+--==============================================================
+-- DRAGGING
+--==============================================================
+
+local dragging = false
+local dragStart
+local startPosition
+
+Header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPosition = Main.Position
     end
 end)
 
--- Speed slider
-local speedLabel = Instance.new("TextLabel", flyFrame)
-speedLabel.Size = UDim2.new(0.9, 0, 0, 35)
-speedLabel.Position = UDim2.new(0.05, 0, 0.2, 0)
-speedLabel.Text = "Speed: " .. flySpeed
-speedLabel.BackgroundTransparency = 1
-speedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-speedLabel.Font = Enum.Font.SourceSans
+UIS.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
 
--- Speed slider (visual bar with knob)
-local speedSliderFrame = Instance.new("Frame", flyFrame)
-speedSliderFrame.Size = UDim2.new(0.9, 0, 0, 45)
-speedSliderFrame.Position = UDim2.new(0.05, 0, 0.3, 0)
-speedSliderFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-local sliderFrameCorner = Instance.new("UICorner", speedSliderFrame)
-sliderFrameCorner.CornerRadius = UDim.new(0, 8)
+        Main.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
 
-local speedSliderFill = Instance.new("Frame", speedSliderFrame)
-speedSliderFill.Size = UDim2.new((flySpeed - 1) / 9, 0, 1, 0)  -- For range 1-10
-speedSliderFill.Position = UDim2.new(0, 0, 0, 0)
-speedSliderFill.BackgroundColor3 = Color3.fromRGB(100, 150, 100)
-local fillCorner = Instance.new("UICorner", speedSliderFill)
-fillCorner.CornerRadius = UDim.new(0, 8)
-
-local speedSliderKnob = Instance.new("TextButton", speedSliderFrame)
-speedSliderKnob.Size = UDim2.new(0, 20, 1, 0)
-speedSliderKnob.Position = UDim2.new((flySpeed - 1) / 9, -10, 0, 0)
-speedSliderKnob.Text = ""
-speedSliderKnob.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
-local knobCorner = Instance.new("UICorner", speedSliderKnob)
-knobCorner.CornerRadius = UDim.new(0, 10)
-
-local dragging = false
-speedSliderKnob.MouseButton1Down:Connect(function()
-    dragging = true
+        Shadow.Position = Main.Position
+    end
 end)
-speedSliderKnob.MouseButton1Up:Connect(function()
-    dragging = false
-end)
-userInputService.InputEnded:Connect(function(input)
+
+UIS.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
         dragging = false
     end
 end)
-runService.RenderStepped:Connect(function()
-    if dragging then
-        local mousePos = userInputService:GetMouseLocation()
-        local sliderPos = speedSliderFrame.AbsolutePosition
-        local sliderSize = speedSliderFrame.AbsoluteSize
-        local relativeX = math.clamp((mousePos.X - sliderPos.X) / sliderSize.X, 0, 1)
-        local newSpeed = math.floor(relativeX * 9 + 1)  -- 1 to 10
-        if newSpeed ~= flySpeed then
-            flySpeed = newSpeed
-            verticalSpeed = flySpeed
-            speedLabel.Text = "Speed: " .. flySpeed
-            speedSliderFill.Size = UDim2.new(relativeX, 0, 1, 0)
-            speedSliderKnob.Position = UDim2.new(relativeX, -10, 0, 0)
-        end
-    end
-end)
 
--- Reset button
-local resetButton = Instance.new("TextButton", flyFrame)
-resetButton.Size = UDim2.new(0.9, 0, 0, 45)
-resetButton.Position = UDim2.new(0.05, 0, 0.45, 0)
-resetButton.Text = "🔄 Reset Speed"
-resetButton.BackgroundColor3 = Color3.fromRGB(80, 80, 150)
-resetButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-resetButton.Font = Enum.Font.SourceSansBold
-local resetCorner = Instance.new("UICorner", resetButton)
-resetCorner.CornerRadius = UDim.new(0, 8)
-resetButton.MouseEnter:Connect(function()
-    tweenService:Create(resetButton, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(100, 100, 170)}):Play()
-end)
-resetButton.MouseLeave:Connect(function()
-    tweenService:Create(resetButton, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(80, 80, 150)}):Play()
-end)
-resetButton.MouseButton1Click:Connect(function()
-    flySpeed = 3
-    verticalSpeed = flySpeed
-    speedLabel.Text = "Speed: " .. flySpeed
-    local relativeX = (flySpeed - 1) / 9  -- 2/9 ≈ 0.222 for speed 3
-    speedSliderFill.Size = UDim2.new(relativeX, 0, 1, 0)
-    speedSliderKnob.Position = UDim2.new(relativeX, -10, 0, 0)
-end)
+--==============================================================
+-- OPEN
+--==============================================================
 
--- Controls info
-local controlsLabel = Instance.new("TextLabel", flyFrame)
-controlsLabel.Size = UDim2.new(0.9, 0, 0, 80)
-controlsLabel.Position = UDim2.new(0.05, 0, 0.65, 0)
-controlsLabel.Text = "WASD: Move\nSpace: Up, Shift: Down\nQ/E: Turn Direction\n(Character & Cam align for height)\nF: Toggle Fly"
-controlsLabel.BackgroundTransparency = 1
-controlsLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-controlsLabel.Font = Enum.Font.SourceSans
-controlsLabel.TextScaled = true
+Main.Size = UDim2.new(0, 940, 0, 570)
+Main.BackgroundTransparency = 1
 
--- Aimbot tab content
-local aimbotToggle = Instance.new("TextButton", aimbotFrame)
-aimbotToggle.Size = UDim2.new(0.4, 0, 0, 55)
-aimbotToggle.Position = UDim2.new(0.05, 0, 0.05, 0)
-aimbotToggle.Text = aimbotEnabled and "🎯 Aim Off" or "🎯 Aim On"
-aimbotToggle.BackgroundColor3 = aimbotEnabled and Color3.fromRGB(150, 100, 100) or Color3.fromRGB(100, 150, 100)
-aimbotToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-aimbotToggle.Font = Enum.Font.SourceSansBold
-local aimCorner = Instance.new("UICorner", aimbotToggle)
-aimCorner.CornerRadius = UDim.new(0, 10)
-aimbotToggle.MouseEnter:Connect(function()
-    tweenService:Create(aimbotToggle, TweenInfo.new(0.2), {BackgroundColor3 = aimbotEnabled and Color3.fromRGB(170, 120, 120) or Color3.fromRGB(120, 170, 120)}):Play()
-end)
-aimbotToggle.MouseLeave:Connect(function()
-    tweenService:Create(aimbotToggle, TweenInfo.new(0.2), {BackgroundColor3 = aimbotEnabled and Color3.fromRGB(150, 100, 100) or Color3.fromRGB(100, 150, 100)}):Play()
-end)
-aimbotToggle.MouseButton1Click:Connect(function()
-    aimbotEnabled = not aimbotEnabled
-    aimbotToggle.Text = aimbotEnabled and "🎯 Aim Off" or "🎯 Aim On"
-    aimbotToggle.BackgroundColor3 = aimbotEnabled and Color3.fromRGB(150, 100, 100) or Color3.fromRGB(100, 150, 100)
-    if aimbotEnabled then
-        startAimbot()
-    else
-        stopAimbot()
-    end
-end)
+Tween(
+    Main,
+    TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+    {
+        Size = UDim2.new(0, 1000, 0, 610),
+        BackgroundTransparency = 0
+    }
+):Play()
 
--- Smoothness slider
-local smoothnessLabel = Instance.new("TextLabel", aimbotFrame)
-smoothnessLabel.Size = UDim2.new(0.9, 0, 0, 35)
-smoothnessLabel.Position = UDim2.new(0.05, 0, 0.2, 0)
-smoothnessLabel.Text = "Smoothness: " .. aimbotSmoothness
-smoothnessLabel.BackgroundTransparency = 1
-smoothnessLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-smoothnessLabel.Font = Enum.Font.SourceSans
-
-local smoothnessSlider = Instance.new("TextBox", aimbotFrame)
-smoothnessSlider.Size = UDim2.new(0.9, 0, 0, 45)
-smoothnessSlider.Position = UDim2.new(0.05, 0, 0.3, 0)
-smoothnessSlider.Text = tostring(aimbotSmoothness)
-smoothnessSlider.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-smoothnessSlider.TextColor3 = Color3.fromRGB(255, 255, 255)
-smoothnessSlider.PlaceholderText = "0.1-1.0"
-local smoothCorner = Instance.new("UICorner", smoothnessSlider)
-smoothCorner.CornerRadius = UDim.new(0, 8)
-smoothnessSlider.FocusLost:Connect(function(enterPressed)
-    if enterPressed then
-        local newSmooth = tonumber(smoothnessSlider.Text)
-        if newSmooth and newSmooth >= 0.1 and newSmooth <= 1.0 then
-            aimbotSmoothness = newSmooth
-            smoothnessLabel.Text = "Smoothness: " .. aimbotSmoothness
-        else
-            smoothnessSlider.Text = tostring(aimbotSmoothness)
-        end
-    end
-end)
-
--- Keybind input
-local keybindLabel = Instance.new("TextLabel", aimbotFrame)
-keybindLabel.Size = UDim2.new(0.9, 0, 0, 35)
-keybindLabel.Position = UDim2.new(0.05, 0, 0.45, 0)
-keybindLabel.Text = "Keybind: " .. aimbotKeybind.Name
-keybindLabel.BackgroundTransparency = 1
-keybindLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-keybindLabel.Font = Enum.Font.SourceSans
-
-local keybindButton = Instance.new("TextButton", aimbotFrame)
-keybindButton.Size = UDim2.new(0.9, 0, 0, 45)
-keybindButton.Position = UDim2.new(0.05, 0, 0.55, 0)
-keybindButton.Text = "Press Key for Aimbot"
-keybindButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-keybindButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-keybindButton.Font = Enum.Font.SourceSansBold
-local keyCorner = Instance.new("UICorner", keybindButton)
-keyCorner.CornerRadius = UDim.new(0, 8)
-keybindButton.MouseButton1Click:Connect(function()
-    keybindButton.Text = "Listening..."
-    local inputConn
-    inputConn = userInputService.InputBegan:Connect(function(input, gameProcessed)
-        if not gameProcessed and input.KeyCode ~= Enum.KeyCode.Unknown then
-            aimbotKeybind = input.KeyCode
-            keybindLabel.Text = "Keybind: " .. aimbotKeybind.Name
-            keybindButton.Text = "Press Key for Aimbot"
-            inputConn:Disconnect()
-        end
-    end)
-end)
-
--- Mode toggle (toggle or hold)
-local modeLabel = Instance.new("TextLabel", aimbotFrame)
-modeLabel.Size = UDim2.new(0.9, 0, 0, 35)
-modeLabel.Position = UDim2.new(0.05, 0, 0.7, 0)
-modeLabel.Text = "Mode: " .. aimbotMode
-modeLabel.BackgroundTransparency = 1
-modeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-modeLabel.Font = Enum.Font.SourceSans
-
-local modeButton = Instance.new("TextButton", aimbotFrame)
-modeButton.Size = UDim2.new(0.9, 0, 0, 45)
-modeButton.Position = UDim2.new(0.05, 0, 0.8, 0)
-modeButton.Text = "Toggle Mode"
-modeButton.BackgroundColor3 = Color3.fromRGB(80, 80, 150)
-modeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-modeButton.Font = Enum.Font.SourceSansBold
-local modeCorner = Instance.new("UICorner", modeButton)
-modeCorner.CornerRadius = UDim.new(0, 8)
-modeButton.MouseButton1Click:Connect(function()
-    aimbotMode = aimbotMode == "toggle" and "hold" or "toggle"
-    modeLabel.Text = "Mode: " .. aimbotMode
-end)
-
--- Fly function with BodyVelocity for anti-ban (sends physics updates to server)
-local function startFly()
-    if not getValidCharacter() then return end
-    -- Add BodyVelocity for movement
-    local bodyVelocity = Instance.new("BodyVelocity")
-    bodyVelocity.Velocity = Vector3.zero
-    bodyVelocity.MaxForce = Vector3.new(400000, 400000, 400000)  -- High force for instant response
-    bodyVelocity.Parent = rootPart
-    flyConnection = runService.Heartbeat:Connect(function(deltaTime)
-        if not flying or not getValidCharacter() then
-            stopFly()
-            return
-        end
-        local moveVector = Vector3.zero
-        -- Horizontal movement based on camera
-        if userInputService:IsKeyDown(Enum.KeyCode.W) then
-            moveVector = moveVector + camera.CFrame.LookVector
-        end
-        if userInputService:IsKeyDown(Enum.KeyCode.S) then
-            moveVector = moveVector - camera.CFrame.LookVector
-        end
-        if userInputService:IsKeyDown(Enum.KeyCode.A) then
-            moveVector = moveVector - camera.CFrame.RightVector
-        end
-        if userInputService:IsKeyDown(Enum.KeyCode.D) then
-            moveVector = moveVector + camera.CFrame.RightVector
-        end
-        if userInputService:IsKeyDown(Enum.KeyCode.Q) then  -- Turn left
-            moveVector = moveVector - camera.CFrame.RightVector
-        end
-        if userInputService:IsKeyDown(Enum.KeyCode.E) then  -- Turn right
-            moveVector = moveVector + camera.CFrame.RightVector
-        end
-        -- Normalize and scale for speed
-        if moveVector.Magnitude > 0 then
-            moveVector = moveVector.Unit * flySpeed
-        end
-        -- Vertical movement
-        if userInputService:IsKeyDown(Enum.KeyCode.Space) then
-            moveVector = moveVector + Vector3.new(0, verticalSpeed, 0)
-        end
-        if userInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-            moveVector = moveVector - Vector3.new(0, verticalSpeed, 0)
-        end
-        -- Set velocity to moveVector for smooth, anti-ban flight
-        bodyVelocity.Velocity = moveVector
-    end)
-end
-
-local function stopFly()
-    if flyConnection then
-        flyConnection:Disconnect()
-        flyConnection = nil
-    end
-    -- Remove BodyVelocity
-    local bodyVelocity = rootPart:FindFirstChild("BodyVelocity")
-    if bodyVelocity then
-        bodyVelocity:Destroy()
-    end
-end
-
--- Aimbot function (subtle camera lock with smoothness)
-local function startAimbot()
-    if aimbotMode == "toggle" then
-        aimbotConnection = runService.RenderStepped:Connect(function()
-            if not aimbotEnabled or not getValidCharacter() then
-                stopAimbot()
-                return
-            end
-            local target = getNearestPlayer()
-            if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
-                local targetPos = target.Character.HumanoidRootPart.Position
-                local currentCFrame = camera.CFrame
-                local targetCFrame = CFrame.new(currentCFrame.Position, targetPos)
-                camera.CFrame = currentCFrame:Lerp(targetCFrame, aimbotSmoothness)  -- Smooth interpolation
-            end
-        end)
-    else  -- Hold mode
-        aimbotHoldConnection = userInputService.InputBegan:Connect(function(input, gameProcessed)
-            if not gameProcessed and input.KeyCode == aimbotKeybind then
-                aimbotConnection = runService.RenderStepped:Connect(function()
-                    if not getValidCharacter() then
-                        stopAimbot()
-                        return
-                    end
-                    local target = getNearestPlayer()
-                    if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
-                        local targetPos = target.Character.HumanoidRootPart.Position
-                        local currentCFrame = camera.CFrame
-                        local targetCFrame = CFrame.new(currentCFrame.Position, targetPos)
-                        camera.CFrame = currentCFrame:Lerp(targetCFrame, aimbotSmoothness)
-                    end
-                end)
-            end
-        end)
-        userInputService.InputEnded:Connect(function(input, gameProcessed)
-            if not gameProcessed and input.KeyCode == aimbotKeybind then
-                if aimbotConnection then
-                    aimbotConnection:Disconnect()
-                    aimbotConnection = nil
-                end
-            end
-        end)
-    end
-end
-
-local function stopAimbot()
-    if aimbotConnection then
-        aimbotConnection:Disconnect()
-        aimbotConnection = nil
-    end
-    if aimbotHoldConnection then
-        aimbotHoldConnection:Disconnect()
-        aimbotHoldConnection = nil
-    end
-end
-
--- Input for F key toggle
-userInputService.InputBegan:Connect(function(input, gameProcessed)
-    if not gameProcessed and input.KeyCode == Enum.KeyCode.F then
-        flying = not flying
-        flyToggle.Text = flying and "🚫 Fly Off" or "🚀 Fly On"
-        flyToggle.BackgroundColor3 = flying and Color3.fromRGB(150, 100, 100) or Color3.fromRGB(100, 150, 100)
-        if flying then
-            humanoid.PlatformStand = true
-            rootPart.Anchored = true
-            rootPart.CanCollide = false
-            startFly()
-        else
-            humanoid.PlatformStand = false
-            rootPart.Anchored = false
-            rootPart.CanCollide = true
-            stopFly()
-        end
-    end
-end)
-
--- Cleanup
-player.CharacterRemoving:Connect(function()
-    stopFly()
-    stopAimbot()
-    screenGui:Destroy()
-end)
+SelectPage("Overview")
