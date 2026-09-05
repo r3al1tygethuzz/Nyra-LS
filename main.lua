@@ -23,6 +23,93 @@ local aimbotEnabled = false
 local currentPage = "Overview"
 
 --==============================================================
+-- FLY LOGIC (ANTI-BAN VERSION)
+--==============================================================
+
+local function getValidCharacter()
+    return Player.Character and Player.Character.Parent and Player.Character:FindFirstChild("HumanoidRootPart") and Player.Character:FindFirstChildOfClass("Humanoid")
+end
+
+local function startFly()
+    if not getValidCharacter() then return end
+    local character = Player.Character
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    local camera = workspace.CurrentCamera
+
+    humanoid.PlatformStand = true
+    -- Do not anchor or disable collides to avoid detection; use low-force BodyVelocity instead
+
+    local bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.MaxForce = Vector3.new(10000, 10000, 10000)  -- Lower force to mimic natural physics and avoid detection
+    bodyVelocity.Velocity = Vector3.zero
+    bodyVelocity.Parent = rootPart
+
+    local flyConnection = RunService.Heartbeat:Connect(function(deltaTime)
+        if not flying or not getValidCharacter() then
+            stopFly()
+            return
+        end
+
+        local moveVector = Vector3.zero
+        -- Horizontal movement (camera-aligned)
+        if UIS:IsKeyDown(Enum.KeyCode.W) then
+            moveVector = moveVector + camera.CFrame.LookVector
+        end
+        if UIS:IsKeyDown(Enum.KeyCode.S) then
+            moveVector = moveVector - camera.CFrame.LookVector
+        end
+        if UIS:IsKeyDown(Enum.KeyCode.A) then
+            moveVector = moveVector - camera.CFrame.RightVector
+        end
+        if UIS:IsKeyDown(Enum.KeyCode.D) then
+            moveVector = moveVector + camera.CFrame.RightVector
+        end
+        -- Vertical movement
+        if UIS:IsKeyDown(Enum.KeyCode.Space) then
+            moveVector = moveVector + Vector3.new(0, flySpeed, 0)
+        end
+        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then
+            moveVector = moveVector - Vector3.new(0, flySpeed, 0)
+        end
+        -- Normalize and clamp speed to realistic values (max 50) to avoid anti-cheat flags
+        if moveVector.Magnitude > 0 then
+            moveVector = moveVector.Unit * math.min(flySpeed, 50)
+        end
+        -- Add small random offset to mimic natural movement and keep sending updates
+        moveVector = moveVector + Vector3.new(math.random(-0.1, 0.1), math.random(-0.1, 0.1), math.random(-0.1, 0.1))
+        bodyVelocity.Velocity = moveVector
+    end)
+end
+
+local function stopFly()
+    if flyConnection then
+        flyConnection:Disconnect()
+        flyConnection = nil
+    end
+    if getValidCharacter() then
+        local humanoid = Player.Character:FindFirstChildOfClass("Humanoid")
+        humanoid.PlatformStand = false
+        local bodyVelocity = Player.Character.HumanoidRootPart:FindFirstChild("BodyVelocity")
+        if bodyVelocity then
+            bodyVelocity:Destroy()
+        end
+    end
+end
+
+-- Toggle fly on F key
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.F then
+        flying = not flying
+        if flying then
+            startFly()
+        else
+            stopFly()
+        end
+    end
+end)
+
+--==============================================================
 -- COLORS
 --==============================================================
 
