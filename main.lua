@@ -545,7 +545,7 @@ local FlyConfig = {
 
 local flyActive = false
 local flyConn   = nil
--- Cached CFrame from last tick — used to skip tween when nothing changed
+-- Cached CFrame from last tick - used to skip tween when nothing changed
 local _prevFlyTargetCF = nil
 -- Saved humanoid state so we restore exactly what was there before flying
 local _savedWalkSpeed  = nil
@@ -579,7 +579,7 @@ local function startFly()
 
     -- Freeze locomotion without flagging unusual humanoid states:
     -- Setting WalkSpeed/JumpPower to 0 looks like a normal game mechanic.
-    -- PlatformStand = true is avoided — it triggers a detectable AnimationId swap.
+    -- PlatformStand = true is avoided - it triggers a detectable AnimationId swap.
     hum.WalkSpeed = 0
     hum.JumpPower = 0
 
@@ -639,7 +639,7 @@ local function startFly()
             )
         end
 
-        -- Character orientation always matches camera (full XYZ — pitch, yaw, roll)
+        -- Character orientation always matches camera (full XYZ - pitch, yaw, roll)
         local targetCF = CFrame.new(newPos) * camCF.Rotation
 
         -- Anti-detection: skip the tween entirely when CFrame hasn't meaningfully changed.
@@ -656,7 +656,7 @@ local function startFly()
         end
         _prevFlyTargetCF = targetCF
 
-        -- TweenService CFrame update — looks identical to a physics-driven move to scanners
+        -- TweenService CFrame update - looks identical to a physics-driven move to scanners
         TweenService:Create(
             root,
             TweenInfo.new(FlyConfig.TweenTime, Enum.EasingStyle.Linear),
@@ -757,7 +757,7 @@ do
         -- Health bar background (dark)
         e.healthBg  = newDrawing("Square", { Filled = true, Color = Color3.fromRGB(0,0,0),
                           Transparency = 0.4, Visible = false })
-        -- Health bar fill (green→red based on health)
+        -- Health bar fill (green->red based on health)
         e.healthFill= newDrawing("Square", { Filled = true, Color = Color3.fromRGB(0,255,0),
                           Visible = false })
         -- Tracer line
@@ -1135,7 +1135,7 @@ OnlineLbl.Position = UDim2.new(1,-173,0,18); OnlineLbl.Size = UDim2.fromOffset(7
 
 local MinBtn = New("TextButton", { Parent = Header, Position = UDim2.new(1,-80,0,16),
     Size = UDim2.fromOffset(28,28), BackgroundColor3 = CONFIG_UI.Panel3, BorderSizePixel = 0,
-    Text = "—", TextColor3 = CONFIG_UI.SubText, TextSize = 16, Font = Enum.Font.GothamBold,
+    Text = "-", TextColor3 = CONFIG_UI.SubText, TextSize = 16, Font = Enum.Font.GothamBold,
     AutoButtonColor = false })
 Corner(MinBtn, 7)
 MinBtn.MouseEnter:Connect(function() Tween(MinBtn, {BackgroundColor3 = CONFIG_UI.Border}) end)
@@ -1452,8 +1452,8 @@ end)
 local SpeedSec = Section(FlightPage, "Speed", "How fast the character moves per tick.")
 SpeedSec.Size = UDim2.new(1,0,0,98)
 
-local SpeedSlider = Slider(SpeedSec, "Fly Speed  (0.1 – 10)", 1, 100, math.floor(FlyConfig.Speed * 10), function(v)
-    -- Slider 1–100 maps to 0.1–10.0 in 0.1 increments
+local SpeedSlider = Slider(SpeedSec, "Fly Speed  (0.1 - 10)", 1, 100, math.floor(FlyConfig.Speed * 10), function(v)
+    -- Slider 1-100 maps to 0.1-10.0 in 0.1 increments
     FlyConfig.Speed = v / 10
     SpeedStatus.Value.Text = string.format("%.1f", FlyConfig.Speed)
 end)
@@ -1461,16 +1461,16 @@ end)
 local SprintSec = Section(FlightPage, "Sprint", "Speed multiplier when holding Left Shift.")
 SprintSec.Size = UDim2.new(1,0,0,98)
 
-local SprintSlider = Slider(SprintSec, "Sprint Multiplier  (1x – 5x)", 10, 50, math.floor(FlyConfig.SprintMult * 10), function(v)
-    -- Slider 10–50 maps to 1.0x–5.0x
+local SprintSlider = Slider(SprintSec, "Sprint Multiplier  (1x - 5x)", 10, 50, math.floor(FlyConfig.SprintMult * 10), function(v)
+    -- Slider 10-50 maps to 1.0x-5.0x
     FlyConfig.SprintMult = v / 10
 end)
 
-local SmoothSec = Section(FlightPage, "Smoothness", "Tween duration — lower = snappier, higher = floatier.")
+local SmoothSec = Section(FlightPage, "Smoothness", "Tween duration - lower = snappier, higher = floatier.")
 SmoothSec.Size = UDim2.new(1,0,0,98)
 
-local TweenSlider = Slider(SmoothSec, "Tween Time  (0.01 – 0.15)", 1, 15, math.floor(FlyConfig.TweenTime * 100), function(v)
-    -- Slider 1–15 maps to 0.01–0.15
+local TweenSlider = Slider(SmoothSec, "Tween Time  (0.01 - 0.15)", 1, 15, math.floor(FlyConfig.TweenTime * 100), function(v)
+    -- Slider 1-15 maps to 0.01-0.15
     FlyConfig.TweenTime = v / 100
 end)
 
@@ -1554,7 +1554,8 @@ end)
 local ActivSec = Section(AimbotPage, "Activation", "How the aimbot activates.")
 ActivSec.Size = UDim2.new(1,0,0,145)
 
-local ModeBtn = Button(ActivSec, "MODE: HOLD", function()
+local ModeBtn
+ModeBtn = Button(ActivSec, "MODE: HOLD", function()
     Config.Input.HoldMode = not Config.Input.HoldMode
     ModeBtn.Text = "MODE: " .. (Config.Input.HoldMode and "HOLD" or "TOGGLE")
     ModeStatus.Value.Text = Config.Input.HoldMode and "HOLD" or "TOGGLE"
