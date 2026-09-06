@@ -268,8 +268,33 @@ function AimController.Track()
         and not FOV.IsInsideFOV(aimPos) then
         AimController.Release(); return
     end
-    local targetCF = CFrame.new(Camera.CFrame.Position, aimPos)
-    Camera.CFrame  = Camera.CFrame:Lerp(targetCF, Config.Aim.Smoothness)
+
+    -- Use mousemoverel to simulate real mouse movement toward the target.
+    -- This moves the OS cursor (and thus the camera) rather than writing
+    -- Camera.CFrame directly, which is what anti-cheats detect.
+    local screenPos, onScreen = Camera:WorldToViewportPoint(aimPos)
+    if not onScreen then return end
+
+    local viewport   = Camera.ViewportSize
+    local centerX    = viewport.X / 2
+    local centerY    = viewport.Y / 2
+
+    -- Delta from screen center to target screen position
+    local dx = screenPos.X - centerX
+    local dy = screenPos.Y - centerY
+
+    -- Apply smoothness: only move a fraction of the delta each frame
+    local moveX = dx * Config.Aim.Smoothness
+    local moveY = dy * Config.Aim.Smoothness
+
+    -- mousemoverel is executor-provided; fall back to Camera.CFrame lerp if unavailable
+    if mousemoverel then
+        mousemoverel(moveX, moveY)
+    else
+        -- fallback: gentle lerp (less detectable than instant snap)
+        local targetCF = CFrame.new(Camera.CFrame.Position, aimPos)
+        Camera.CFrame  = Camera.CFrame:Lerp(targetCF, Config.Aim.Smoothness)
+    end
 end
 
 -- =============================================
