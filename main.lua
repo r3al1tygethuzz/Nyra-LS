@@ -538,10 +538,18 @@ local FlyConfig = {
     TweenTime  = 0.03, -- tween smoothness: lower = snappier, higher = smoother
     NoClip     = false, -- whether root CanCollide is kept off (phase through walls)
     Toggle     = Enum.KeyCode.F,
+    -- Anti-detection: add sub-stud random micro-jitter to mimic natural float/physics variance
+    Jitter     = true,
+    JitterAmt  = 0.012, -- max offset per axis (studs)
 }
 
 local flyActive = false
 local flyConn   = nil
+-- Cached CFrame from last tick — used to skip tween when nothing changed
+local _prevFlyTargetCF = nil
+-- Saved humanoid state so we restore exactly what was there before flying
+local _savedWalkSpeed  = nil
+local _savedJumpPower  = nil
 
 local function getRoot()
     local c = LocalPlayer.Character
@@ -565,14 +573,23 @@ local function startFly()
     local root = getRoot()
     local hum  = getHumanoid()
 
-    -- Anchor stops gravity entirely — anchored parts are excluded from the physics solver.
-    -- Zero out any lingering velocity/angular momentum so the character doesn't drift.
+    -- Save humanoid locomotion state so we restore exactly what was there
+    _savedWalkSpeed = hum.WalkSpeed
+    _savedJumpPower = hum.JumpPower
+
+    -- Freeze locomotion without flagging unusual humanoid states:
+    -- Setting WalkSpeed/JumpPower to 0 looks like a normal game mechanic.
+    -- PlatformStand = true is avoided — it triggers a detectable AnimationId swap.
+    hum.WalkSpeed = 0
+    hum.JumpPower = 0
+
+    -- Anchor stops gravity entirely. Clear any residual momentum so there's no drift.
     root.Anchored    = true
     root.CanCollide  = false
-    hum.PlatformStand = true
-    -- Clear residual physics state
     root.AssemblyLinearVelocity  = Vector3.zero
     root.AssemblyAngularVelocity = Vector3.zero
+
+    _prevFlyTargetCF = root.CFrame
 
     flyConn = RunService.Heartbeat:Connect(function()
         if not flyActive or not isValidChar() then
@@ -588,8 +605,7 @@ local function startFly()
             speed = speed * FlyConfig.SprintMult
         end
 
-        -- Movement delta in camera space — character moves exactly where the camera points
-        -- including full pitch (looking up flies you up, looking down flies you down)
+        -- Movement delta: full camera-space XYZ so looking up pitches the character up
         local delta = Vector3.zero
         if UserInputService:IsKeyDown(Enum.KeyCode.W) then
             delta = delta + camCF.LookVector * speed
@@ -603,7 +619,6 @@ local function startFly()
         if UserInputService:IsKeyDown(Enum.KeyCode.D) then
             delta = delta + camCF.RightVector * speed
         end
-        -- Explicit vertical override (Space / LeftCtrl)
         if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
             delta = delta + Vector3.new(0, speed, 0)
         end
@@ -611,13 +626,37 @@ local function startFly()
             delta = delta + Vector3.new(0, -speed, 0)
         end
 
-        -- Character CFrame always matches camera orientation (X Y Z all axes).
-        -- This makes the character tilt/look up or down exactly as the camera does.
-        local newPos   = root.Position + delta
+        local newPos = root.Position + delta
+
+        -- Anti-detection: sub-stud micro-jitter mimics natural floating-point physics variance.
+        -- Real anchored parts still have tiny positional noise on the server; this matches it.
+        if FlyConfig.Jitter then
+            local j = FlyConfig.JitterAmt
+            newPos = newPos + Vector3.new(
+                (math.random() * 2 - 1) * j,
+                (math.random() * 2 - 1) * j,
+                (math.random() * 2 - 1) * j
+            )
+        end
+
+        -- Character orientation always matches camera (full XYZ — pitch, yaw, roll)
         local targetCF = CFrame.new(newPos) * camCF.Rotation
 
-        -- TweenService tween looks like natural movement to anti-cheat scanners.
-        -- Mass is irrelevant because the part is Anchored (solver ignores it entirely).
+        -- Anti-detection: skip the tween entirely when CFrame hasn't meaningfully changed.
+        -- Constant same-value replication is a strong detection signal; silence = less noise.
+        local prev = _prevFlyTargetCF
+        local posDiff = prev and (targetCF.Position - prev.Position).Magnitude or math.huge
+        local rotChanged = prev and (
+            math.abs(targetCF.LookVector:Dot(prev.LookVector) - 1) > 0.0002
+        ) or true
+
+        if posDiff < 0.001 and not rotChanged then
+            -- Nothing changed; don't push a replication update this frame
+            return
+        end
+        _prevFlyTargetCF = targetCF
+
+        -- TweenService CFrame update — looks identical to a physics-driven move to scanners
         TweenService:Create(
             root,
             TweenInfo.new(FlyConfig.TweenTime, Enum.EasingStyle.Linear),
@@ -628,22 +667,31 @@ end
 
 function stopFly()
     if flyConn then flyConn:Disconnect(); flyConn = nil end
+    _prevFlyTargetCF = nil
+
     local root = getRoot()
     local hum  = getHumanoid()
+
     if root then
-        -- Un-anchor restores the physics solver — gravity, mass, and collisions all resume.
-        root.Anchored = false
-        -- Zero velocity so the character doesn't snap/fling on landing
+        -- Anti-detection: un-anchor AFTER zeroing velocity.
+        -- If we un-anchor first, the server sees a sudden velocity spike from residual momentum.
         root.AssemblyLinearVelocity  = Vector3.zero
         root.AssemblyAngularVelocity = Vector3.zero
-        -- Restore collision if NoClip is off
+        root.Anchored = false
         if not FlyConfig.NoClip then
             root.CanCollide = true
         end
     end
+
     if hum then
-        hum.PlatformStand = false
+        -- Restore locomotion to the exact values saved at fly-start, not hardcoded defaults.
+        -- This is important: if the game set WalkSpeed to 20, PlatformStand restored it to 16.
+        hum.WalkSpeed = _savedWalkSpeed or 16
+        hum.JumpPower = _savedJumpPower or 50
     end
+
+    _savedWalkSpeed = nil
+    _savedJumpPower = nil
 end
 
 -- CharacterAdded: clean up fly state on respawn
