@@ -131,16 +131,25 @@ end
 -- ─────────────────────────────────────────────
 local FOV = {}
 do
-    local circle = Drawing.new("Circle")
-    circle.Color     = Color3.fromRGB(255, 255, 255)
-    circle.Thickness = Config.FOV.Thickness
-    circle.Radius    = Config.FOV.Radius
-    circle.Filled    = false
-    circle.Visible   = Config.FOV.Visible and Config.FOV.Enabled
-    circle.Transparency = Config.FOV.Transparency
+    -- Drawing is an exploit-only global; guard so the script doesn't crash on
+    -- executors that don't support it (UI and aimbot still load either way).
+    local circle = nil
+    local ok, err = pcall(function()
+        circle           = Drawing.new("Circle")
+        circle.Color     = Color3.fromRGB(255, 255, 255)
+        circle.Thickness = Config.FOV.Thickness
+        circle.Radius    = Config.FOV.Radius
+        circle.Filled    = false
+        circle.Visible   = Config.FOV.Visible and Config.FOV.Enabled
+        circle.Transparency = Config.FOV.Transparency
+    end)
+    if not ok then
+        warn("Nyra: Drawing API unavailable (" .. tostring(err) .. ") — FOV circle disabled.")
+    end
     FOV._circle = circle
 
     RunService.RenderStepped:Connect(function()
+        if not circle then return end
         circle.Position = Vector2.new(Mouse.X, Mouse.Y)
         circle.Radius   = Config.FOV.Radius
         circle.Visible  = Config.FOV.Visible and Config.FOV.Enabled
