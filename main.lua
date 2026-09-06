@@ -334,36 +334,9 @@ function AimController.Track()
     local screenPos, onScreen = Camera:WorldToViewportPoint(aimPos)
     if not onScreen then return end
 
-    if Config.Aim.Mode == "cursor" then
-        -- CURSOR MODE: move the OS mouse toward the target's screen position.
-        -- The FOV circle is around the mouse, so we move the cursor (which moves
-        -- the camera) toward the target. Delta is from current mouse pos to target.
-        local dx = screenPos.X - Mouse.X
-        local dy = screenPos.Y - Mouse.Y
-        local moveX = dx * Config.Aim.Smoothness
-        local moveY = dy * Config.Aim.Smoothness
-        if mousemoverel then
-            mousemoverel(moveX, moveY)
-        else
-            -- fallback if executor doesn't support mousemoverel
-            local targetCF = CFrame.new(Camera.CFrame.Position, aimPos)
-            Camera.CFrame  = Camera.CFrame:Lerp(targetCF, Config.Aim.Smoothness)
-        end
-    else
-        -- CAMERA MODE: move from screen center toward target.
-        -- Uses mousemoverel so it looks like real mouse input.
-        local viewport = Camera.ViewportSize
-        local dx = screenPos.X - viewport.X / 2
-        local dy = screenPos.Y - viewport.Y / 2
-        local moveX = dx * Config.Aim.Smoothness
-        local moveY = dy * Config.Aim.Smoothness
-        if mousemoverel then
-            mousemoverel(moveX, moveY)
-        else
-            local targetCF = CFrame.new(Camera.CFrame.Position, aimPos)
-            Camera.CFrame  = Camera.CFrame:Lerp(targetCF, Config.Aim.Smoothness)
-        end
-    end
+    -- Always use camera lerp for aiming, which works in all executors
+    local targetCF = CFrame.new(Camera.CFrame.Position, aimPos)
+    Camera.CFrame  = Camera.CFrame:Lerp(targetCF, Config.Aim.Smoothness)
 end
 
 -- =============================================
