@@ -100,7 +100,12 @@ function Visibility.Check(targetPosition)
     local direction = targetPosition - origin
     local params    = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = { LocalPlayer.Character }
+    -- Bug fix: LocalPlayer.Character can be nil; guard it
+    local filterList = {}
+    if LocalPlayer.Character then
+        table.insert(filterList, LocalPlayer.Character)
+    end
+    params.FilterDescendantsInstances = filterList
     local result = workspace:Raycast(origin, direction, params)
     if not result then return true end
     local hit = result.Instance
@@ -131,7 +136,9 @@ do
 
     RunService.RenderStepped:Connect(function()
         if not circle then return end
-        circle.Position = Vector2.new(Mouse.X, Mouse.Y)
+        -- Always centered on screen, not on the mouse cursor
+        local vp = Camera.ViewportSize
+        circle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
         circle.Radius   = Config.FOV.Radius
         circle.Visible  = Config.FOV.Visible and Config.FOV.Enabled
     end)
@@ -140,14 +147,17 @@ end
 function FOV.IsInsideFOV(worldPosition)
     local sp, onScreen = Camera:WorldToViewportPoint(worldPosition)
     if not onScreen then return false end
-    local cursor = Vector2.new(Mouse.X, Mouse.Y)
-    return (Vector2.new(sp.X, sp.Y) - cursor).Magnitude <= Config.FOV.Radius
+    local vp     = Camera.ViewportSize
+    local center = Vector2.new(vp.X / 2, vp.Y / 2)
+    return (Vector2.new(sp.X, sp.Y) - center).Magnitude <= Config.FOV.Radius
 end
 
 function FOV.DistanceToCursor(worldPosition)
     local sp, onScreen = Camera:WorldToViewportPoint(worldPosition)
     if not onScreen then return math.huge end
-    return (Vector2.new(sp.X, sp.Y) - Vector2.new(Mouse.X, Mouse.Y)).Magnitude
+    local vp     = Camera.ViewportSize
+    local center = Vector2.new(vp.X / 2, vp.Y / 2)
+    return (Vector2.new(sp.X, sp.Y) - center).Magnitude
 end
 
 -- =============================================
@@ -299,32 +309,59 @@ end
 
 -- =============================================
 --  MODULE: Input
+--  Input._active = key is currently held/toggled ON
+--  The render loop runs when BOTH Config.Aim.Enabled
+--  AND Input._active are true.
+--  HOWEVER: the UI aimbot toggle sets Config.Aim.Enabled
+--  and also forces Input._active = true so the loop
+--  fires without needing a keypress.
 -- =============================================
 local Input = {}
 Input._active = false
 
 function Input.IsActive() return Input._active end
 
+-- Called by the UI aimbot toggle to force-activate without a keypress
+function Input.ForceActivate()
+    Input._active = true
+    AimController.Acquire()
+    if AimController.CurrentTarget then AimController.Lock() end
+end
+
+function Input.ForceDeactivate()
+    Input._active = false
+    AimController.Release()
+end
+
 UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
-    if input.KeyCode == Config.Input.ActivationKey then
-        if Config.Input.HoldMode then
-            Input._active = true
-        else
-            Input._active = not Input._active
-        end
-        if Input._active then AimController.Acquire(); AimController.Lock()
-        else AimController.Release() end
+    if input.KeyCode ~= Config.Input.ActivationKey then return end
+    -- Only handle key if aimbot is enabled
+    if not Config.Aim.Enabled then return end
+
+    if Config.Input.HoldMode then
+        Input._active = true
+    else
+        Input._active = not Input._active
+    end
+
+    if Input._active then
+        AimController.Acquire()
+        if AimController.CurrentTarget then AimController.Lock() end
+    else
+        AimController.Release()
     end
 end)
 
 UserInputService.InputEnded:Connect(function(input, processed)
     if processed then return end
-    if Config.Input.HoldMode then
-        if input.KeyCode == Config.Input.ActivationKey then
-            Input._active = false
-            AimController.Release()
-        end
+    if not Config.Input.HoldMode then return end
+    if input.KeyCode ~= Config.Input.ActivationKey then return end
+    -- In hold mode, releasing key deactivates ONLY if aimbot is still enabled
+    -- (if user toggled aimbot off via UI first, don't double-release)
+    if Config.Aim.Enabled then
+        Input._active = false
+        AimController.Release()
     end
 end)
 
@@ -332,18 +369,21 @@ end)
 --  MAIN RENDER LOOP (aimbot)
 -- =============================================
 RunService.RenderStepped:Connect(function()
-    if Config.Aim.Enabled and Input.IsActive() then
-        if AimController.State == "IDLE" or AimController.State == "SEARCHING" then
-            AimController.Acquire()
-            if AimController.CurrentTarget then AimController.Lock() end
-        elseif AimController.State == "LOCKED" or AimController.State == "TRACKING" then
-            AimController.Track()
-        elseif AimController.State == "INVALID" then
-            if Config.Lock.Reacquire then AimController.Acquire()
-            else AimController.Release() end
-        end
-    else
+    -- Gate: aimbot must be enabled AND input must be active
+    if not Config.Aim.Enabled or not Input.IsActive() then
         if AimController.IsLocked then AimController.Release() end
+        return
+    end
+
+    local state = AimController.State
+    if state == "IDLE" or state == "SEARCHING" then
+        AimController.Acquire()
+        if AimController.CurrentTarget then AimController.Lock() end
+    elseif state == "LOCKED" or state == "TRACKING" then
+        AimController.Track()
+    elseif state == "INVALID" then
+        if Config.Lock.Reacquire then AimController.Acquire()
+        else AimController.Release() end
     end
 end)
 
@@ -357,9 +397,10 @@ end)
 --  which looks like natural movement to anti-cheat.
 -- =============================================
 local FlyConfig = {
-    Speed      = 3,    -- studs per heartbeat tick (matches reference 1-5 range)
-    SprintMult = 2,
-    TweenTime  = 0.03, -- matches reference script tween duration
+    Speed      = 1,    -- studs per heartbeat tick; 0.1 (creep) to 10 (very fast)
+    SprintMult = 2,    -- multiplier when LeftShift held
+    TweenTime  = 0.03, -- tween smoothness: lower = snappier, higher = smoother
+    NoClip     = false, -- whether root CanCollide is kept off (phase through walls)
     Toggle     = Enum.KeyCode.F,
 }
 
@@ -450,21 +491,17 @@ function stopFly()
     local hum  = getHumanoid()
     if root then
         root.Anchored   = false
-        root.CanCollide = true
+        -- Only restore CanCollide if NoClip is off
+        if not FlyConfig.NoClip then
+            root.CanCollide = true
+        end
     end
     if hum then
         hum.PlatformStand = false
     end
 end
 
-UserInputService.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if input.KeyCode == FlyConfig.Toggle then
-        flyActive = not flyActive
-        if flyActive then startFly() else stopFly() end
-    end
-end)
-
+-- CharacterAdded: clean up fly state on respawn
 LocalPlayer.CharacterAdded:Connect(function()
     flyActive = false
     if flyConn then flyConn:Disconnect(); flyConn = nil end
@@ -849,7 +886,8 @@ local QuickAimToggle = Toggle(QuickSec, "Aim Assist", "Enable the aimbot.", fals
     Config.Aim.Enabled = v
     AimStatus.Value.Text = v and "ENABLED" or "DISABLED"
     AimStatus.Dot.BackgroundColor3 = v and CONFIG_UI.Success or CONFIG_UI.Muted
-    if not v then AimController.Release() end
+    -- Force-activate/deactivate so the render loop fires without needing a keypress
+    if v then Input.ForceActivate() else Input.ForceDeactivate() end
 end)
 
 -- =============================================
@@ -868,9 +906,43 @@ local FlightToggle = Toggle(FlightSec, "Enable Flight", "Toggle the fly system."
     QuickFlightToggle.Set(v)
 end)
 
-local SpeedSlider = Slider(FlightSec, "Movement Speed", 10, 200, FlyConfig.Speed, function(v)
-    FlyConfig.Speed = math.floor(v)
-    SpeedStatus.Value.Text = tostring(FlyConfig.Speed)
+-- Speed: 0.1 (very slow) to 10 (very fast) in 0.1 steps
+-- Display as 1 decimal place; stored as-is (studs/tick)
+local SpeedSec = Section(FlightPage, "Speed", "How fast the character moves per tick.")
+SpeedSec.Size = UDim2.new(1,0,0,98)
+
+local SpeedSlider = Slider(SpeedSec, "Fly Speed  (0.1 – 10)", 1, 100, math.floor(FlyConfig.Speed * 10), function(v)
+    -- Slider 1–100 maps to 0.1–10.0 in 0.1 increments
+    FlyConfig.Speed = v / 10
+    SpeedStatus.Value.Text = string.format("%.1f", FlyConfig.Speed)
+end)
+
+local SprintSec = Section(FlightPage, "Sprint", "Speed multiplier when holding Left Shift.")
+SprintSec.Size = UDim2.new(1,0,0,98)
+
+local SprintSlider = Slider(SprintSec, "Sprint Multiplier  (1x – 5x)", 10, 50, math.floor(FlyConfig.SprintMult * 10), function(v)
+    -- Slider 10–50 maps to 1.0x–5.0x
+    FlyConfig.SprintMult = v / 10
+end)
+
+local SmoothSec = Section(FlightPage, "Smoothness", "Tween duration — lower = snappier, higher = floatier.")
+SmoothSec.Size = UDim2.new(1,0,0,98)
+
+local TweenSlider = Slider(SmoothSec, "Tween Time  (0.01 – 0.15)", 1, 15, math.floor(FlyConfig.TweenTime * 100), function(v)
+    -- Slider 1–15 maps to 0.01–0.15
+    FlyConfig.TweenTime = v / 100
+end)
+
+local PhysicsSec = Section(FlightPage, "Physics", "Wall collision and phase options.")
+PhysicsSec.Size = UDim2.new(1,0,0,98)
+
+local NoClipToggle = Toggle(PhysicsSec, "No-Clip", "Phase through walls while flying.", FlyConfig.NoClip, function(v)
+    FlyConfig.NoClip = v
+    -- Apply immediately if currently flying
+    local root = getRoot()
+    if root and flyActive then
+        root.CanCollide = not v
+    end
 end)
 
 local ControlSec = Section(FlightPage, "Controls", "Keyboard layout.")
@@ -891,7 +963,7 @@ local AimToggle = Toggle(AimSec, "Enable Aim Assist", "Lock onto the closest tar
     Config.Aim.Enabled = v
     AimStatus.Value.Text = v and "ENABLED" or "DISABLED"
     AimStatus.Dot.BackgroundColor3 = v and CONFIG_UI.Success or CONFIG_UI.Muted
-    if not v then AimController.Release() end
+    if v then Input.ForceActivate() else Input.ForceDeactivate() end
     QuickAimToggle.Set(v)
 end)
 
@@ -1029,13 +1101,14 @@ end)
 
 -- =============================================
 --  F KEY -> FLIGHT TOGGLE (keyboard shortcut)
+--  Single source of truth: FlightToggle.Set(v)
+--  triggers the callback which sets flyActive,
+--  calls startFly/stopFly, and syncs QuickFlightToggle.
 -- =============================================
 UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
     if input.KeyCode == FlyConfig.Toggle then
-        flyActive = not flyActive
-        FlightToggle.Set(flyActive)
-        -- FlightToggle callback fires startFly/stopFly automatically
+        FlightToggle.Set(not flyActive)
     end
 end)
 
