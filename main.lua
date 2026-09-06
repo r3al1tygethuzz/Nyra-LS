@@ -348,18 +348,23 @@ RunService.RenderStepped:Connect(function()
 end)
 
 -- =============================================
---  FLY SYSTEM  (BodyVelocity, smooth)
+--  FLY SYSTEM
+--  Method: Anchored root + TweenService CFrame
+--  Identical to the reference script approach.
+--  No BodyVelocity, no physics constraints.
+--  rootPart.Anchored = true kills gravity entirely.
+--  TweenService tweens the CFrame each heartbeat
+--  which looks like natural movement to anti-cheat.
 -- =============================================
 local FlyConfig = {
-    Speed      = 60,
-    SprintMult = 2.2,
-    Accel      = 10,
+    Speed      = 3,    -- studs per heartbeat tick (matches reference 1-5 range)
+    SprintMult = 2,
+    TweenTime  = 0.03, -- matches reference script tween duration
     Toggle     = Enum.KeyCode.F,
 }
 
 local flyActive = false
 local flyConn   = nil
-local bv, bg    = nil, nil
 
 local function getRoot()
     local c = LocalPlayer.Character
@@ -371,89 +376,84 @@ local function getHumanoid()
     return c and c:FindFirstChildOfClass("Humanoid")
 end
 
+local function isValidChar()
+    local c = LocalPlayer.Character
+    return c and c.Parent
+        and c:FindFirstChild("HumanoidRootPart")
+        and c:FindFirstChildOfClass("Humanoid")
+end
+
 local function startFly()
+    if not isValidChar() then return end
     local root = getRoot()
-    if not root then return end
-    local hum = getHumanoid()
-    if hum then
-        hum.PlatformStand = true
-        hum:ChangeState(Enum.HumanoidStateType.Physics)
-    end
-    root.AssemblyLinearVelocity  = Vector3.zero
-    root.AssemblyAngularVelocity = Vector3.zero
+    local hum  = getHumanoid()
 
-    bv          = Instance.new("BodyVelocity")
-    bv.Name     = "_NyraFlyBV"
-    bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-    bv.Velocity = Vector3.zero
-    bv.Parent   = root
+    -- Anchor stops gravity dead — no physics engine involvement at all
+    root.Anchored    = true
+    root.CanCollide  = false
+    hum.PlatformStand = true
 
-    bg           = Instance.new("BodyGyro")
-    bg.Name      = "_NyraFlyBG"
-    bg.MaxTorque = Vector3.new(0, 1e9, 0)
-    bg.D         = 100
-    bg.P         = 3000
-    bg.CFrame    = root.CFrame
-    bg.Parent    = root
+    flyConn = RunService.Heartbeat:Connect(function()
+        if not flyActive or not isValidChar() then
+            stopFly(); return
+        end
 
-    local currentVel = Vector3.zero
-
-    flyConn = RunService.Heartbeat:Connect(function(dt)
         root = getRoot()
-        if not root or not bv or not bg then return end
+        if not root then return end
 
-        local camCF   = Camera.CFrame
-        local lookXZ  = Vector3.new(camCF.LookVector.X,  0, camCF.LookVector.Z)
-        local rightXZ = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z)
-        if lookXZ.Magnitude  > 0 then lookXZ  = lookXZ.Unit  end
-        if rightXZ.Magnitude > 0 then rightXZ = rightXZ.Unit end
-
-        local moveDir = Vector3.zero
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + lookXZ  end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - lookXZ  end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - rightXZ end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + rightXZ end
-
-        local vy = 0
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space)       then vy =  1 end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then vy = -1 end
-
+        local camCF = Camera.CFrame
         local speed = FlyConfig.Speed
         if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
             speed = speed * FlyConfig.SprintMult
         end
 
-        local targetVel = (moveDir.Magnitude > 0 and moveDir.Unit * speed or Vector3.zero)
-                        + Vector3.new(0, vy * speed, 0)
-
-        local alpha  = math.min(1, dt * FlyConfig.Accel)
-        currentVel   = currentVel:Lerp(targetVel, alpha)
-        bv.Velocity  = currentVel
-
-        if moveDir.Magnitude > 0 then
-            bg.CFrame = CFrame.new(root.Position, root.Position + moveDir.Unit)
+        -- Horizontal movement in camera space (flattened look/right vectors)
+        local horiz = Vector3.zero
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            horiz = horiz + camCF.LookVector * speed
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            horiz = horiz - camCF.LookVector * speed
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            horiz = horiz - camCF.RightVector * speed
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            horiz = horiz + camCF.RightVector * speed
         end
 
-        if currentVel.Magnitude > 0.5 then
-            local pitchCF = CFrame.new(root.Position, root.Position + currentVel.Unit)
-            root.CFrame   = root.CFrame:Lerp(pitchCF, 0.15)
+        -- Vertical
+        local vert = Vector3.zero
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+            vert = Vector3.new(0, speed, 0)
         end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+            vert = Vector3.new(0, -speed, 0)
+        end
+
+        -- Target CFrame: new position, rotation aligned to camera (character faces where cam looks)
+        local newPos     = root.Position + horiz + vert
+        local targetCF   = CFrame.new(newPos) * camCF.Rotation
+
+        -- TweenService tween looks exactly like a normal physics move to anti-cheat
+        TweenService:Create(
+            root,
+            TweenInfo.new(FlyConfig.TweenTime, Enum.EasingStyle.Linear),
+            { CFrame = targetCF }
+        ):Play()
     end)
 end
 
-local function stopFly()
-    if bv  then bv:Destroy();  bv  = nil end
-    if bg  then bg:Destroy();  bg  = nil end
+function stopFly()
     if flyConn then flyConn:Disconnect(); flyConn = nil end
-    local hum = getHumanoid()
+    local root = getRoot()
+    local hum  = getHumanoid()
+    if root then
+        root.Anchored   = false
+        root.CanCollide = true
+    end
     if hum then
         hum.PlatformStand = false
-        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-    end
-    local root = getRoot()
-    if root then
-        root.AssemblyLinearVelocity  = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
     end
 end
 
@@ -467,8 +467,6 @@ end)
 
 LocalPlayer.CharacterAdded:Connect(function()
     flyActive = false
-    if bv  then bv:Destroy();  bv  = nil end
-    if bg  then bg:Destroy();  bg  = nil end
     if flyConn then flyConn:Disconnect(); flyConn = nil end
 end)
 
