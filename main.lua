@@ -29,6 +29,9 @@ Config.Aim = {
     PredictionTime = 0.12,
     TargetPart     = "Head",
     AllowedParts   = { "Head", "UpperTorso", "HumanoidRootPart" },
+    -- "camera" = lerp/mousemoverel from screen center (crosshair aim)
+    -- "cursor" = FOV circle follows mouse, aim moves mouse toward target
+    Mode           = "camera",
 }
 Config.FOV = {
     Enabled      = true,
@@ -136,28 +139,39 @@ do
 
     RunService.RenderStepped:Connect(function()
         if not circle then return end
-        -- Always centered on screen, not on the mouse cursor
-        local vp = Camera.ViewportSize
-        circle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
-        circle.Radius   = Config.FOV.Radius
-        circle.Visible  = Config.FOV.Visible and Config.FOV.Enabled
+        -- cursor mode: circle follows mouse
+        -- camera mode: circle stays at screen center (crosshair)
+        if Config.Aim.Mode == "cursor" then
+            circle.Position = Vector2.new(Mouse.X, Mouse.Y)
+        else
+            local vp = Camera.ViewportSize
+            circle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
+        end
+        circle.Radius  = Config.FOV.Radius
+        circle.Visible = Config.FOV.Visible and Config.FOV.Enabled
     end)
+end
+
+-- Returns the 2D reference point used for FOV checks (mouse or screen center)
+local function getFOVOrigin()
+    if Config.Aim.Mode == "cursor" then
+        return Vector2.new(Mouse.X, Mouse.Y)
+    else
+        local vp = Camera.ViewportSize
+        return Vector2.new(vp.X / 2, vp.Y / 2)
+    end
 end
 
 function FOV.IsInsideFOV(worldPosition)
     local sp, onScreen = Camera:WorldToViewportPoint(worldPosition)
     if not onScreen then return false end
-    local vp     = Camera.ViewportSize
-    local center = Vector2.new(vp.X / 2, vp.Y / 2)
-    return (Vector2.new(sp.X, sp.Y) - center).Magnitude <= Config.FOV.Radius
+    return (Vector2.new(sp.X, sp.Y) - getFOVOrigin()).Magnitude <= Config.FOV.Radius
 end
 
 function FOV.DistanceToCursor(worldPosition)
     local sp, onScreen = Camera:WorldToViewportPoint(worldPosition)
     if not onScreen then return math.huge end
-    local vp     = Camera.ViewportSize
-    local center = Vector2.new(vp.X / 2, vp.Y / 2)
-    return (Vector2.new(sp.X, sp.Y) - center).Magnitude
+    return (Vector2.new(sp.X, sp.Y) - getFOVOrigin()).Magnitude
 end
 
 -- =============================================
@@ -279,31 +293,38 @@ function AimController.Track()
         AimController.Release(); return
     end
 
-    -- Use mousemoverel to simulate real mouse movement toward the target.
-    -- This moves the OS cursor (and thus the camera) rather than writing
-    -- Camera.CFrame directly, which is what anti-cheats detect.
     local screenPos, onScreen = Camera:WorldToViewportPoint(aimPos)
     if not onScreen then return end
 
-    local viewport   = Camera.ViewportSize
-    local centerX    = viewport.X / 2
-    local centerY    = viewport.Y / 2
-
-    -- Delta from screen center to target screen position
-    local dx = screenPos.X - centerX
-    local dy = screenPos.Y - centerY
-
-    -- Apply smoothness: only move a fraction of the delta each frame
-    local moveX = dx * Config.Aim.Smoothness
-    local moveY = dy * Config.Aim.Smoothness
-
-    -- mousemoverel is executor-provided; fall back to Camera.CFrame lerp if unavailable
-    if mousemoverel then
-        mousemoverel(moveX, moveY)
+    if Config.Aim.Mode == "cursor" then
+        -- CURSOR MODE: move the OS mouse toward the target's screen position.
+        -- The FOV circle is around the mouse, so we move the cursor (which moves
+        -- the camera) toward the target. Delta is from current mouse pos to target.
+        local dx = screenPos.X - Mouse.X
+        local dy = screenPos.Y - Mouse.Y
+        local moveX = dx * Config.Aim.Smoothness
+        local moveY = dy * Config.Aim.Smoothness
+        if mousemoverel then
+            mousemoverel(moveX, moveY)
+        else
+            -- fallback if executor doesn't support mousemoverel
+            local targetCF = CFrame.new(Camera.CFrame.Position, aimPos)
+            Camera.CFrame  = Camera.CFrame:Lerp(targetCF, Config.Aim.Smoothness)
+        end
     else
-        -- fallback: gentle lerp (less detectable than instant snap)
-        local targetCF = CFrame.new(Camera.CFrame.Position, aimPos)
-        Camera.CFrame  = Camera.CFrame:Lerp(targetCF, Config.Aim.Smoothness)
+        -- CAMERA MODE: move from screen center toward target.
+        -- Uses mousemoverel so it looks like real mouse input.
+        local viewport = Camera.ViewportSize
+        local dx = screenPos.X - viewport.X / 2
+        local dy = screenPos.Y - viewport.Y / 2
+        local moveX = dx * Config.Aim.Smoothness
+        local moveY = dy * Config.Aim.Smoothness
+        if mousemoverel then
+            mousemoverel(moveX, moveY)
+        else
+            local targetCF = CFrame.new(Camera.CFrame.Position, aimPos)
+            Camera.CFrame  = Camera.CFrame:Lerp(targetCF, Config.Aim.Smoothness)
+        end
     end
 end
 
@@ -896,7 +917,7 @@ end)
 PageHeader(FlightPage, "Flight", "Configure the flight controller.")
 
 local FlightSec = Section(FlightPage, "Flight Controller", "Movement configuration.")
-FlightSec.Size = UDim2.new(1,0,0,128)
+FlightSec.Size = UDim2.new(1,0,0,145)
 
 local FlightToggle = Toggle(FlightSec, "Enable Flight", "Toggle the fly system.", false, function(v)
     flyActive = v
@@ -904,6 +925,22 @@ local FlightToggle = Toggle(FlightSec, "Enable Flight", "Toggle the fly system."
     FlightStatus.Value.Text = v and "ENABLED" or "DISABLED"
     FlightStatus.Dot.BackgroundColor3 = v and CONFIG_UI.Success or CONFIG_UI.Muted
     QuickFlightToggle.Set(v)
+end)
+
+-- Fly keybind button
+local FlyKeyBtn = Button(FlightSec, "FLY KEYBIND: F", nil)
+FlyKeyBtn.Position = UDim2.fromOffset(18, 94)
+FlyKeyBtn.MouseButton1Click:Connect(function()
+    FlyKeyBtn.Text = "PRESS A KEY..."
+    local conn
+    conn = UserInputService.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Keyboard
+            and input.KeyCode ~= Enum.KeyCode.Unknown then
+            FlyConfig.Toggle = input.KeyCode
+            FlyKeyBtn.Text = "FLY KEYBIND: " .. input.KeyCode.Name
+            conn:Disconnect()
+        end
+    end)
 end)
 
 -- Speed: 0.1 (very slow) to 10 (very fast) in 0.1 steps
@@ -957,7 +994,7 @@ CtrlLbl.TextYAlignment = Enum.TextYAlignment.Top
 PageHeader(AimbotPage, "Aimbot", "Configure the aim-assist system.")
 
 local AimSec = Section(AimbotPage, "Aim Assist", "Core aim-assist settings.")
-AimSec.Size = UDim2.new(1,0,0,188)
+AimSec.Size = UDim2.new(1,0,0,230)
 
 local AimToggle = Toggle(AimSec, "Enable Aim Assist", "Lock onto the closest target in FOV.", false, function(v)
     Config.Aim.Enabled = v
@@ -973,6 +1010,19 @@ end)
 
 local PredToggle = Toggle(AimSec, "Prediction", "Lead moving targets.", Config.Aim.Prediction, function(v)
     Config.Aim.Prediction = v
+end)
+
+-- Aimbot mode toggle: Camera vs Cursor
+local AimModeBtn = Button(AimSec, "AIM MODE: CAMERA", nil)
+AimModeBtn.Position = UDim2.fromOffset(18, 180)
+AimModeBtn.MouseButton1Click:Connect(function()
+    if Config.Aim.Mode == "camera" then
+        Config.Aim.Mode = "cursor"
+        AimModeBtn.Text = "AIM MODE: CURSOR"
+    else
+        Config.Aim.Mode = "camera"
+        AimModeBtn.Text = "AIM MODE: CAMERA"
+    end
 end)
 
 local FOVSec = Section(AimbotPage, "FOV Settings", "Targeting field of view.")
