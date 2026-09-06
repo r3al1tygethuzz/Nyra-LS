@@ -23,15 +23,17 @@ local Camera      = workspace.CurrentCamera
 local Config = {}
 
 Config.Aim = {
-    Enabled        = false,
-    Smoothness     = 0.15,
-    Prediction     = true,
-    PredictionTime = 0.12,
-    TargetPart     = "Head",
-    AllowedParts   = { "Head", "UpperTorso", "HumanoidRootPart" },
-    -- "camera" = lerp/mousemoverel from screen center (crosshair aim)
-    -- "cursor" = FOV circle follows mouse, aim moves mouse toward target
-    Mode           = "camera",
+    Enabled           = false,
+    Smoothness        = 0.15,
+    PredictionEnabled = true,
+    PredictionTime    = 0.12,
+    TargetPart        = "Head",   -- "Head"|"UpperTorso"|"HumanoidRootPart"|"Nearest"
+    AllowedParts      = { "Head", "UpperTorso", "HumanoidRootPart" },
+    AimOffset         = Vector3.new(0, 0, 0),
+    -- "camera" = from screen center | "cursor" = from mouse position
+    Mode              = "camera",
+    -- "ClosestToCrosshair" | "ClosestDistance" | "LowestHealth"
+    TargetPriority    = "ClosestToCrosshair",
 }
 Config.FOV = {
     Enabled      = true,
@@ -54,7 +56,7 @@ Config.Lock = {
     Reacquire         = true,
 }
 Config.Input = {
-    -- ActivationKey can be an Enum.KeyCode OR Enum.UserInputType (for mouse buttons)
+    -- ActivationKey is an Enum.KeyCode or Enum.UserInputType (mouse buttons)
     ActivationKey  = Enum.UserInputType.MouseButton2,
     HoldMode       = true,
     IsMouseButton  = true,   -- true when ActivationKey is a UserInputType
@@ -217,14 +219,35 @@ end
 -- =============================================
 local TargetManager = {}
 
-local function GetPartPosition(character, partName)
-    local part = character:FindFirstChild(partName)
-    if part then return part.Position end
-    for _, fb in ipairs(Config.Aim.AllowedParts) do
-        local p = character:FindFirstChild(fb)
-        if p then return p.Position end
+-- Returns the world position of the best aim point on a character.
+-- When TargetPart == "Nearest", picks whichever AllowedPart is closest to the FOV origin.
+local function GetAimPosition(character)
+    local origin2D = getFOVOrigin()
+
+    if Config.Aim.TargetPart == "Nearest" then
+        local bestPart, bestDist2D = nil, math.huge
+        for _, partName in ipairs(Config.Aim.AllowedParts) do
+            local part = character:FindFirstChild(partName)
+            if part then
+                local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
+                if onScreen then
+                    local d = (Vector2.new(sp.X, sp.Y) - origin2D).Magnitude
+                    if d < bestDist2D then bestDist2D = d; bestPart = part end
+                end
+            end
+        end
+        return bestPart and (bestPart.Position + Config.Aim.AimOffset) or nil
     end
-    return nil
+
+    local part = character:FindFirstChild(Config.Aim.TargetPart)
+    if not part then
+        -- Fallback through AllowedParts
+        for _, fb in ipairs(Config.Aim.AllowedParts) do
+            part = character:FindFirstChild(fb)
+            if part then break end
+        end
+    end
+    return part and (part.Position + Config.Aim.AimOffset) or nil
 end
 
 function TargetManager.IsValid(player)
@@ -252,19 +275,43 @@ function TargetManager.IsValid(player)
     return true
 end
 
-function TargetManager.GetClosest()
-    local best, bestDist = nil, math.huge
+function TargetManager.GetBest()
+    local best      = nil
+    local bestScore = math.huge
+
     for _, player in ipairs(Players:GetPlayers()) do
-        if TargetManager.IsValid(player) then
-            local char = player.Character
-            local pos  = GetPartPosition(char, Config.Aim.TargetPart)
-            if not pos then continue end
-            if Config.FOV.Enabled and not FOV.IsInsideFOV(pos) then continue end
-            if Config.Targeting.VisibilityCheck and not Visibility.Check(pos) then continue end
-            local d = FOV.DistanceToCursor(pos)
-            if d < bestDist then bestDist = d; best = player end
+        if not TargetManager.IsValid(player) then goto nextPlayer end
+
+        local char = player.Character
+        local pos  = GetAimPosition(char)
+        if not pos then goto nextPlayer end
+
+        if Config.FOV.Enabled and not FOV.IsInsideFOV(pos) then goto nextPlayer end
+        if Config.Targeting.VisibilityCheck and not Visibility.Check(pos) then goto nextPlayer end
+
+        -- Score based on priority
+        local score
+        local pri = Config.Aim.TargetPriority
+        if pri == "ClosestDistance" then
+            local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local origin = myRoot and myRoot.Position or Camera.CFrame.Position
+            score = (pos - origin).Magnitude
+        elseif pri == "LowestHealth" then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            score = hum and hum.Health or math.huge
+        else
+            -- Default: ClosestToCrosshair
+            score = FOV.DistanceToCursor(pos)
         end
+
+        if score < bestScore then
+            bestScore = score
+            best      = player
+        end
+
+        ::nextPlayer::
     end
+
     return best
 end
 
@@ -273,10 +320,19 @@ end
 -- =============================================
 local Prediction = {}
 
+-- Returns a predicted world position for a character's aim part.
+-- Bug fix: previously returned root position + velocity regardless of TargetPart,
+-- making TargetPart irrelevant when prediction was on.
+-- Now: get the target part position first, then add predicted velocity offset.
 function Prediction.Calculate(character)
     local root = character:FindFirstChild("HumanoidRootPart")
     if not root then return nil end
-    return root.Position + root.AssemblyLinearVelocity * Config.Aim.PredictionTime
+    -- Get the actual aim point (includes AimOffset)
+    local basePos = GetAimPosition(character)
+    if not basePos then return nil end
+    -- Offset basePos by predicted velocity delta (same motion for all parts)
+    local vel = root.AssemblyLinearVelocity
+    return basePos + vel * Config.Aim.PredictionTime
 end
 
 -- =============================================
@@ -287,8 +343,17 @@ AimController.State         = "IDLE"
 AimController.CurrentTarget = nil
 AimController.IsLocked      = false
 
+-- Debug info exposed for the debug panel
+AimController.Debug = {
+    LastAimPos    = nil,
+    LastDist      = 0,
+    LastVelocity  = 0,
+    InsideFOV     = false,
+    Visible       = false,
+}
+
 function AimController.Acquire()
-    local t = TargetManager.GetClosest()
+    local t = TargetManager.GetBest()
     if t then
         AimController.CurrentTarget = t
         AimController.State = "ACQUIRED"
@@ -318,14 +383,32 @@ function AimController.Track()
         return
     end
     AimController.State = "TRACKING"
-    local char   = target.Character
-    local aimPos = Config.Aim.Prediction and Prediction.Calculate(char) or nil
-    if not aimPos then
-        local part = char:FindFirstChild(Config.Aim.TargetPart)
-                  or char:FindFirstChild("HumanoidRootPart")
-        if not part then return end
-        aimPos = part.Position
+    local char = target.Character
+
+    -- Get aim position: prediction adds velocity offset on top of the correct target part
+    -- Bug fix: when prediction was on, always aimed at root regardless of TargetPart.
+    local aimPos
+    if Config.Aim.PredictionEnabled then
+        aimPos = Prediction.Calculate(char)
     end
+    if not aimPos then
+        -- Non-predicted: GetAimPosition handles TargetPart + AimOffset
+        aimPos = GetAimPosition(char)
+    end
+    if not aimPos then return end
+
+    -- Update debug info
+    do
+        local root = char:FindFirstChild("HumanoidRootPart")
+        local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local origin = myRoot and myRoot.Position or Camera.CFrame.Position
+        AimController.Debug.LastAimPos   = aimPos
+        AimController.Debug.LastDist     = root and (root.Position - origin).Magnitude or 0
+        AimController.Debug.LastVelocity = root and root.AssemblyLinearVelocity.Magnitude or 0
+        AimController.Debug.InsideFOV    = FOV.IsInsideFOV(aimPos)
+        AimController.Debug.Visible      = Visibility.Check(aimPos)
+    end
+
     if Config.Lock.ReleaseOutsideFOV and Config.FOV.Enabled
         and not FOV.IsInsideFOV(aimPos) then
         AimController.Release(); return
@@ -334,9 +417,24 @@ function AimController.Track()
     local screenPos, onScreen = Camera:WorldToViewportPoint(aimPos)
     if not onScreen then return end
 
-    -- Always use camera lerp for aiming, which works in all executors
-    local targetCF = CFrame.new(Camera.CFrame.Position, aimPos)
-    Camera.CFrame  = Camera.CFrame:Lerp(targetCF, Config.Aim.Smoothness)
+    if Config.Aim.Mode == "cursor" then
+        local dx = screenPos.X - Mouse.X
+        local dy = screenPos.Y - Mouse.Y
+        if mousemoverel then
+            mousemoverel(dx * Config.Aim.Smoothness, dy * Config.Aim.Smoothness)
+        else
+            Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, aimPos), Config.Aim.Smoothness)
+        end
+    else
+        local vp = Camera.ViewportSize
+        local dx = screenPos.X - vp.X / 2
+        local dy = screenPos.Y - vp.Y / 2
+        if mousemoverel then
+            mousemoverel(dx * Config.Aim.Smoothness, dy * Config.Aim.Smoothness)
+        else
+            Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, aimPos), Config.Aim.Smoothness)
+        end
+    end
 end
 
 -- =============================================
@@ -467,10 +565,14 @@ local function startFly()
     local root = getRoot()
     local hum  = getHumanoid()
 
-    -- Anchor stops gravity dead — no physics engine involvement at all
+    -- Anchor stops gravity entirely — anchored parts are excluded from the physics solver.
+    -- Zero out any lingering velocity/angular momentum so the character doesn't drift.
     root.Anchored    = true
     root.CanCollide  = false
     hum.PlatformStand = true
+    -- Clear residual physics state
+    root.AssemblyLinearVelocity  = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
 
     flyConn = RunService.Heartbeat:Connect(function()
         if not flyActive or not isValidChar() then
@@ -486,35 +588,36 @@ local function startFly()
             speed = speed * FlyConfig.SprintMult
         end
 
-        -- Horizontal movement in camera space (flattened look/right vectors)
-        local horiz = Vector3.zero
+        -- Movement delta in camera space — character moves exactly where the camera points
+        -- including full pitch (looking up flies you up, looking down flies you down)
+        local delta = Vector3.zero
         if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-            horiz = horiz + camCF.LookVector * speed
+            delta = delta + camCF.LookVector * speed
         end
         if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-            horiz = horiz - camCF.LookVector * speed
+            delta = delta - camCF.LookVector * speed
         end
         if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-            horiz = horiz - camCF.RightVector * speed
+            delta = delta - camCF.RightVector * speed
         end
         if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-            horiz = horiz + camCF.RightVector * speed
+            delta = delta + camCF.RightVector * speed
         end
-
-        -- Vertical
-        local vert = Vector3.zero
+        -- Explicit vertical override (Space / LeftCtrl)
         if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-            vert = Vector3.new(0, speed, 0)
+            delta = delta + Vector3.new(0, speed, 0)
         end
         if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-            vert = Vector3.new(0, -speed, 0)
+            delta = delta + Vector3.new(0, -speed, 0)
         end
 
-        -- Target CFrame: new position, rotation aligned to camera (character faces where cam looks)
-        local newPos     = root.Position + horiz + vert
-        local targetCF   = CFrame.new(newPos) * camCF.Rotation
+        -- Character CFrame always matches camera orientation (X Y Z all axes).
+        -- This makes the character tilt/look up or down exactly as the camera does.
+        local newPos   = root.Position + delta
+        local targetCF = CFrame.new(newPos) * camCF.Rotation
 
-        -- TweenService tween looks exactly like a normal physics move to anti-cheat
+        -- TweenService tween looks like natural movement to anti-cheat scanners.
+        -- Mass is irrelevant because the part is Anchored (solver ignores it entirely).
         TweenService:Create(
             root,
             TweenInfo.new(FlyConfig.TweenTime, Enum.EasingStyle.Linear),
@@ -528,8 +631,12 @@ function stopFly()
     local root = getRoot()
     local hum  = getHumanoid()
     if root then
-        root.Anchored   = false
-        -- Only restore CanCollide if NoClip is off
+        -- Un-anchor restores the physics solver — gravity, mass, and collisions all resume.
+        root.Anchored = false
+        -- Zero velocity so the character doesn't snap/fling on landing
+        root.AssemblyLinearVelocity  = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        -- Restore collision if NoClip is off
         if not FlyConfig.NoClip then
             root.CanCollide = true
         end
@@ -1357,8 +1464,8 @@ local SmoothSlider = Slider(AimSec, "Smoothness (camera lerp)", 1, 100, math.flo
     Config.Aim.Smoothness = v / 100
 end)
 
-local PredToggle = Toggle(AimSec, "Prediction", "Lead moving targets.", Config.Aim.Prediction, function(v)
-    Config.Aim.Prediction = v
+local PredToggle = Toggle(AimSec, "Prediction", "Lead moving targets.", Config.Aim.PredictionEnabled, function(v)
+    Config.Aim.PredictionEnabled = v
 end)
 
 -- Aimbot mode toggle: Camera vs Cursor
@@ -1405,16 +1512,29 @@ local ModeBtn = Button(ActivSec, "MODE: HOLD", function()
     ModeStatus.Value.Text = Config.Input.HoldMode and "HOLD" or "TOGGLE"
 end)
 
-local KeyBtn = Button(ActivSec, "KEYBIND: Q", nil)
+local KeyBtn = Button(ActivSec, "KEYBIND: RMB", nil)
 KeyBtn.Position = UDim2.fromOffset(18, 94)
 KeyBtn.MouseButton1Click:Connect(function()
-    KeyBtn.Text = "PRESS A KEY..."
+    KeyBtn.Text = "PRESS KEY OR MOUSE BTN..."
     local conn
     conn = UserInputService.InputBegan:Connect(function(input)
+        -- Accept keyboard keys
         if input.UserInputType == Enum.UserInputType.Keyboard
             and input.KeyCode ~= Enum.KeyCode.Unknown then
             Config.Input.ActivationKey = input.KeyCode
+            Config.Input.IsMouseButton = false
             KeyBtn.Text = "KEYBIND: " .. input.KeyCode.Name
+            conn:Disconnect()
+        -- Accept mouse buttons (except LMB which is used to click the button itself)
+        elseif input.UserInputType == Enum.UserInputType.MouseButton2
+            or input.UserInputType == Enum.UserInputType.MouseButton3 then
+            Config.Input.ActivationKey = input.UserInputType
+            Config.Input.IsMouseButton = true
+            local names = {
+                [Enum.UserInputType.MouseButton2] = "RMB",
+                [Enum.UserInputType.MouseButton3] = "MMB",
+            }
+            KeyBtn.Text = "KEYBIND: " .. (names[input.UserInputType] or "MB")
             conn:Disconnect()
         end
     end)
