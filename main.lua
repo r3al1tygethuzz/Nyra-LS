@@ -54,14 +54,52 @@ Config.Lock = {
     Reacquire         = true,
 }
 Config.Input = {
-    ActivationKey = Enum.KeyCode.Q,
-    HoldMode      = true,
+    -- ActivationKey can be an Enum.KeyCode OR Enum.UserInputType (for mouse buttons)
+    ActivationKey  = Enum.UserInputType.MouseButton2,
+    HoldMode       = true,
+    IsMouseButton  = true,   -- true when ActivationKey is a UserInputType
 }
 Config.Weapon = {
     ProjectileSpeed = 300,
     Gravity         = workspace.Gravity,
 }
 Config.Debug = { Enabled = false }
+
+Config.ESP = {
+    Enabled        = false,
+    -- Boxes
+    Boxes          = true,
+    BoxColor       = Color3.fromRGB(255, 255, 255),
+    BoxThickness   = 1,
+    BoxFilled      = false,
+    BoxFillTrans   = 0.85,
+    -- Names
+    Names          = true,
+    NameColor      = Color3.fromRGB(255, 255, 255),
+    NameSize       = 13,
+    -- Health bar
+    HealthBar      = true,
+    HealthBarSide  = "left",   -- "left" or "right"
+    -- Distance
+    Distance       = true,
+    DistanceColor  = Color3.fromRGB(200, 200, 200),
+    MaxDistance    = 1000,
+    -- Tracers
+    Tracers        = false,
+    TracerOrigin   = "bottom", -- "bottom" | "center" | "top"
+    TracerColor    = Color3.fromRGB(255, 80, 80),
+    TracerThick    = 1,
+    -- Skeletons
+    Skeletons      = false,
+    SkeletonColor  = Color3.fromRGB(255, 255, 255),
+    SkeletonThick  = 1,
+    -- Chams (highlight)
+    Chams          = false,
+    ChamColor      = Color3.fromRGB(255, 80, 80),
+    ChamTrans      = 0.5,
+    -- Team filter (same as aimbot)
+    TeamCheck      = true,
+}
 
 function Config.Save()
     if writefile then
@@ -354,10 +392,18 @@ function Input.ForceDeactivate()
     AimController.Release()
 end
 
+-- Helper: check if the input event matches the configured activation binding
+local function inputMatchesActivation(input)
+    if Config.Input.IsMouseButton then
+        return input.UserInputType == Config.Input.ActivationKey
+    else
+        return input.KeyCode == Config.Input.ActivationKey
+    end
+end
+
 UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
-    if input.KeyCode ~= Config.Input.ActivationKey then return end
-    -- Only handle key if aimbot is enabled
+    if not inputMatchesActivation(input) then return end
     if not Config.Aim.Enabled then return end
 
     if Config.Input.HoldMode then
@@ -377,9 +423,7 @@ end)
 UserInputService.InputEnded:Connect(function(input, processed)
     if processed then return end
     if not Config.Input.HoldMode then return end
-    if input.KeyCode ~= Config.Input.ActivationKey then return end
-    -- In hold mode, releasing key deactivates ONLY if aimbot is still enabled
-    -- (if user toggled aimbot off via UI first, don't double-release)
+    if not inputMatchesActivation(input) then return end
     if Config.Aim.Enabled then
         Input._active = false
         AimController.Release()
@@ -527,6 +571,338 @@ LocalPlayer.CharacterAdded:Connect(function()
     flyActive = false
     if flyConn then flyConn:Disconnect(); flyConn = nil end
 end)
+
+-- =============================================
+--  ESP ENGINE
+--  Drawing-based per-player highlights.
+--  All Drawing objects are pooled per player.
+--  Runs on RenderStepped; cleans up on player leave.
+-- =============================================
+local ESP = {}
+do
+    -- Pool: { [player] = { box, boxFill, nameLabel, distLabel, healthBg, healthFill, tracer, skeleton[] } }
+    local pool = {}
+
+    -- Skeleton joint pairs for R15
+    local SKELETON_PAIRS = {
+        {"Head",       "UpperTorso"},
+        {"UpperTorso", "LowerTorso"},
+        {"UpperTorso", "LeftUpperArm"},
+        {"LeftUpperArm","LeftLowerArm"},
+        {"LeftLowerArm","LeftHand"},
+        {"UpperTorso", "RightUpperArm"},
+        {"RightUpperArm","RightLowerArm"},
+        {"RightLowerArm","RightHand"},
+        {"LowerTorso", "LeftUpperLeg"},
+        {"LeftUpperLeg","LeftLowerLeg"},
+        {"LeftLowerLeg","LeftFoot"},
+        {"LowerTorso", "RightUpperLeg"},
+        {"RightUpperLeg","RightLowerLeg"},
+        {"RightLowerLeg","RightFoot"},
+    }
+
+    local function newDrawing(type, props)
+        local ok, d = pcall(Drawing.new, type)
+        if not ok then return nil end
+        for k, v in pairs(props or {}) do
+            pcall(function() d[k] = v end)
+        end
+        return d
+    end
+
+    local function createPool(player)
+        local e = {}
+        -- Bounding box outline
+        e.box       = newDrawing("Square", { Filled = false, Color = Config.ESP.BoxColor,
+                          Thickness = Config.ESP.BoxThickness, Visible = false })
+        -- Box fill
+        e.boxFill   = newDrawing("Square", { Filled = true, Color = Config.ESP.BoxColor,
+                          Transparency = Config.ESP.BoxFillTrans, Visible = false })
+        -- Name label
+        e.name      = newDrawing("Text",   { Text = player.Name, Size = Config.ESP.NameSize,
+                          Color = Config.ESP.NameColor, Center = true,
+                          Outline = true, OutlineColor = Color3.new(0,0,0), Visible = false })
+        -- Distance label
+        e.dist      = newDrawing("Text",   { Text = "", Size = 11,
+                          Color = Config.ESP.DistanceColor, Center = true,
+                          Outline = true, OutlineColor = Color3.new(0,0,0), Visible = false })
+        -- Health bar background (dark)
+        e.healthBg  = newDrawing("Square", { Filled = true, Color = Color3.fromRGB(0,0,0),
+                          Transparency = 0.4, Visible = false })
+        -- Health bar fill (green→red based on health)
+        e.healthFill= newDrawing("Square", { Filled = true, Color = Color3.fromRGB(0,255,0),
+                          Visible = false })
+        -- Tracer line
+        e.tracer    = newDrawing("Line",   { Color = Config.ESP.TracerColor,
+                          Thickness = Config.ESP.TracerThick, Visible = false })
+        -- Skeleton lines
+        e.skeleton  = {}
+        for _ = 1, #SKELETON_PAIRS do
+            table.insert(e.skeleton, newDrawing("Line", { Color = Config.ESP.SkeletonColor,
+                Thickness = Config.ESP.SkeletonThick, Visible = false }))
+        end
+        pool[player] = e
+        return e
+    end
+
+    local function removePool(player)
+        local e = pool[player]
+        if not e then return end
+        -- Hide and remove all drawings
+        local function rm(d) if d then pcall(function() d.Visible = false; d:Remove() end) end end
+        rm(e.box); rm(e.boxFill); rm(e.name); rm(e.dist); rm(e.healthBg); rm(e.healthFill); rm(e.tracer)
+        for _, l in ipairs(e.skeleton) do rm(l) end
+        pool[player] = nil
+    end
+
+    local function hidePool(e)
+        if not e then return end
+        local function h(d) if d then pcall(function() d.Visible = false end) end end
+        h(e.box); h(e.boxFill); h(e.name); h(e.dist); h(e.healthBg); h(e.healthFill); h(e.tracer)
+        for _, l in ipairs(e.skeleton) do h(l) end
+    end
+
+    -- Get 2D bounding box corners of a character
+    local function getBoundingBox(char)
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then return nil end
+        -- Use root + offsets to approximate a character bounding box
+        local corners3D = {
+            root.Position + Vector3.new(-1.5,  3,   0),
+            root.Position + Vector3.new( 1.5,  3,   0),
+            root.Position + Vector3.new(-1.5, -3,   0),
+            root.Position + Vector3.new( 1.5, -3,   0),
+        }
+        local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
+        for _, pt in ipairs(corners3D) do
+            local sp, onScreen = Camera:WorldToViewportPoint(pt)
+            if not onScreen then return nil end
+            if sp.X < minX then minX = sp.X end
+            if sp.Y < minY then minY = sp.Y end
+            if sp.X > maxX then maxX = sp.X end
+            if sp.Y > maxY then maxY = sp.Y end
+        end
+        return minX, minY, maxX - minX, maxY - minY
+    end
+
+    -- Apply SelectionBox (chams) to a character
+    local function applyCham(player, char)
+        local existing = char:FindFirstChild("_NyraESPCham")
+        if existing then existing:Destroy() end
+        if not Config.ESP.Chams then return end
+        local sb = Instance.new("SelectionBox")
+        sb.Name        = "_NyraESPCham"
+        sb.Adornee     = char
+        sb.Color3      = Config.ESP.ChamColor
+        sb.LineThickness = 0
+        sb.SurfaceColor3 = Config.ESP.ChamColor
+        sb.SurfaceTransparency = Config.ESP.ChamTrans
+        sb.Parent      = char
+    end
+
+    local function removeCham(char)
+        local sb = char and char:FindFirstChild("_NyraESPCham")
+        if sb then sb:Destroy() end
+    end
+
+    -- Main per-player update called from RenderStepped
+    local function updatePlayer(player)
+        local char = player.Character
+        if not char then return false end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        local hum  = char:FindFirstChildOfClass("Humanoid")
+        if not root or not hum then return false end
+
+        -- Team check
+        if Config.ESP.TeamCheck and LocalPlayer.Team
+            and player.Team == LocalPlayer.Team then
+            return false
+        end
+
+        -- Distance check
+        local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local dist   = myRoot and (root.Position - myRoot.Position).Magnitude
+                              or  (root.Position - Camera.CFrame.Position).Magnitude
+        if dist > Config.ESP.MaxDistance then return false end
+
+        local sp, onScreen = Camera:WorldToViewportPoint(root.Position)
+        if not onScreen then return false end
+
+        local e = pool[player]
+        if not e then e = createPool(player) end
+
+        -- Bounding box
+        local bx, by, bw, bh = getBoundingBox(char)
+        local boxOk = bx ~= nil
+
+        if Config.ESP.Boxes and boxOk then
+            if e.box then
+                e.box.Size     = Vector2.new(bw, bh)
+                e.box.Position = Vector2.new(bx, by)
+                e.box.Color    = Config.ESP.BoxColor
+                e.box.Thickness= Config.ESP.BoxThickness
+                e.box.Visible  = true
+            end
+            if Config.ESP.BoxFilled and e.boxFill then
+                e.boxFill.Size     = Vector2.new(bw, bh)
+                e.boxFill.Position = Vector2.new(bx, by)
+                e.boxFill.Color    = Config.ESP.BoxColor
+                e.boxFill.Transparency = Config.ESP.BoxFillTrans
+                e.boxFill.Visible  = true
+            else
+                if e.boxFill then e.boxFill.Visible = false end
+            end
+        else
+            if e.box     then e.box.Visible     = false end
+            if e.boxFill then e.boxFill.Visible = false end
+        end
+
+        -- Name label
+        if Config.ESP.Names and e.name then
+            e.name.Text     = player.Name
+            e.name.Size     = Config.ESP.NameSize
+            e.name.Color    = Config.ESP.NameColor
+            e.name.Position = boxOk
+                and Vector2.new(bx + bw / 2, by - 16)
+                or  Vector2.new(sp.X, sp.Y - 20)
+            e.name.Visible  = true
+        else
+            if e.name then e.name.Visible = false end
+        end
+
+        -- Distance label
+        if Config.ESP.Distance and e.dist then
+            e.dist.Text     = string.format("[%d]", math.floor(dist))
+            e.dist.Color    = Config.ESP.DistanceColor
+            e.dist.Position = boxOk
+                and Vector2.new(bx + bw / 2, by + bh + 2)
+                or  Vector2.new(sp.X, sp.Y + 10)
+            e.dist.Visible  = true
+        else
+            if e.dist then e.dist.Visible = false end
+        end
+
+        -- Health bar
+        if Config.ESP.HealthBar and boxOk and e.healthBg and e.healthFill then
+            local hpRatio  = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+            local barW     = 4
+            local barX     = Config.ESP.HealthBarSide == "right"
+                             and (bx + bw + 3)
+                             or  (bx - barW - 3)
+            local filledH  = math.floor(bh * hpRatio)
+            local r        = 1 - hpRatio
+            local g        = hpRatio
+            e.healthBg.Size     = Vector2.new(barW, bh)
+            e.healthBg.Position = Vector2.new(barX, by)
+            e.healthBg.Visible  = true
+            e.healthFill.Size     = Vector2.new(barW, filledH)
+            e.healthFill.Position = Vector2.new(barX, by + bh - filledH)
+            e.healthFill.Color    = Color3.fromRGB(math.floor(r*255), math.floor(g*255), 0)
+            e.healthFill.Visible  = filledH > 0
+        else
+            if e.healthBg   then e.healthBg.Visible   = false end
+            if e.healthFill then e.healthFill.Visible = false end
+        end
+
+        -- Tracer
+        if Config.ESP.Tracers and e.tracer then
+            local vp = Camera.ViewportSize
+            local originY = Config.ESP.TracerOrigin == "top"    and 0
+                         or Config.ESP.TracerOrigin == "center" and vp.Y / 2
+                         or vp.Y
+            e.tracer.From      = Vector2.new(vp.X / 2, originY)
+            e.tracer.To        = Vector2.new(sp.X, sp.Y)
+            e.tracer.Color     = Config.ESP.TracerColor
+            e.tracer.Thickness = Config.ESP.TracerThick
+            e.tracer.Visible   = true
+        else
+            if e.tracer then e.tracer.Visible = false end
+        end
+
+        -- Skeleton
+        if Config.ESP.Skeletons then
+            for i, pair in ipairs(SKELETON_PAIRS) do
+                local p1 = char:FindFirstChild(pair[1])
+                local p2 = char:FindFirstChild(pair[2])
+                local line = e.skeleton[i]
+                if p1 and p2 and line then
+                    local s1, on1 = Camera:WorldToViewportPoint(p1.Position)
+                    local s2, on2 = Camera:WorldToViewportPoint(p2.Position)
+                    if on1 and on2 then
+                        line.From      = Vector2.new(s1.X, s1.Y)
+                        line.To        = Vector2.new(s2.X, s2.Y)
+                        line.Color     = Config.ESP.SkeletonColor
+                        line.Thickness = Config.ESP.SkeletonThick
+                        line.Visible   = true
+                    else
+                        line.Visible = false
+                    end
+                elseif line then
+                    line.Visible = false
+                end
+            end
+        else
+            for _, line in ipairs(e.skeleton) do
+                if line then line.Visible = false end
+            end
+        end
+
+        -- Chams: applied via SelectionBox on character (not per-frame drawing)
+        if Config.ESP.Chams then
+            if not char:FindFirstChild("_NyraESPCham") then applyCham(player, char) end
+        else
+            removeCham(char)
+        end
+
+        return true
+    end
+
+    -- RenderStepped update loop
+    RunService.RenderStepped:Connect(function()
+        if not Config.ESP.Enabled then
+            -- Hide all when disabled
+            for player, e in pairs(pool) do hidePool(e) end
+            return
+        end
+        local seen = {}
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local ok = updatePlayer(player)
+                if not ok then
+                    local e = pool[player]
+                    if e then hidePool(e) end
+                end
+                seen[player] = true
+            end
+        end
+        -- Clean up pools for players who left
+        for player in pairs(pool) do
+            if not seen[player] then removePool(player) end
+        end
+    end)
+
+    -- Clean up when a player leaves
+    Players.PlayerRemoving:Connect(function(player)
+        removePool(player)
+    end)
+
+    -- Clean up chams on character removal
+    Players.PlayerAdded:Connect(function(player)
+        player.CharacterRemoving:Connect(function(char)
+            removeCham(char)
+        end)
+    end)
+    -- Also hook existing players
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            player.CharacterRemoving:Connect(function(char)
+                removeCham(char)
+            end)
+        end
+    end
+
+    ESP._pool = pool
+end
 
 -- =============================================
 --  UI  --  Modern Nyra LS Control Panel
