@@ -729,9 +729,9 @@ do
         {"RightLowerLeg","RightFoot"},
     }
 
-    local function newDrawing(type, props)
-        local ok, d = pcall(Drawing.new, type)
-        if not ok then return nil end
+    local function newDrawing(kind, props)
+        local ok, d = pcall(function() return Drawing.new(kind) end)
+        if not ok or not d then return nil end
         for k, v in pairs(props or {}) do
             pcall(function() d[k] = v end)
         end
